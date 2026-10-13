@@ -7,16 +7,16 @@ Build on-device AI applications with PyTorch ExecuTorch on Qualcomm-powered PCs,
 
 ## Start with your track
 
-> [!IMPORTANT]
-> **Read the documentation for the track you have been shortlisted for before starting your project. The other tracks are not prerequisites and do not need to be completed.** For independent projects, choose the track that matches your target device.
-
 | Track                                                                                    | Device details                                                                                                                                                                                                                                                                                                 | Guide                                    | Artifacts                                              |
 | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- | ------------------------------------------------------ |
 | **Compute**: local AI applications for PCs                                               | Dell Latitude with **Snapdragon X Elite**; Windows 11 ARM64; Hexagon NPU                                                                                                                                                                                                                                       | [Compute guide](Compute/README.md)       | [Compute artifacts](Compute/artifacts/README.md)       |
 | **Mobile + XR**: mobile intelligence, immersive interaction, and multimodal applications | [Galaxy S25 Ultra](https://www.qualcomm.com/smartphones/device-finder/samsung-galaxy-s25-ultra): **Snapdragon 8 Elite for Galaxy**, Android.<br>[Galaxy XR headset](https://news.samsung.com/us/introducing-galaxy-xr-opening-new-worlds/): **Snapdragon XR2+ Gen 2**, Android XR.<br>Both have a Hexagon NPU. | [Mobile + XR guide](Mobile-XR/README.md) | [Mobile + XR artifacts](Mobile-XR/artifacts/README.md) |
 | **IoT**: edge AI with sensing and real-time control                                      | [Arduino VENTUNO Q](https://docs.arduino.cc/hardware/ventuno-q): **Dragonwing IQ8 / QCS8275**, Ubuntu Linux, Hexagon NPU; separate STM32H5 microcontroller for control tasks                                                                                                                                   | [IoT guide](IoT/README.md)               | [IoT artifacts](IoT/artifacts/README.md)               |
 
-Each track's `README.md` contains its instructions; `artifacts/` holds accompanying files as they become available.
+> [!IMPORTANT]
+> **Read the documentation for the track you have been shortlisted for before starting your project. The other tracks are not prerequisites and do not need to be completed.** For independent projects, choose the track that matches your target device.
+>
+> Each track is independent, with its own setup, model export, deployment, and verification instructions. Follow only your selected track's `README.md`; `artifacts/` holds its accompanying files as they become available.
 
 ## How ExecuTorch and QNN fit together
 
@@ -45,6 +45,6 @@ After [AI Hub setup](https://workbench.aihub.qualcomm.com/docs/hub/getting_start
 - **Compute:** AI Hub lists [Snapdragon X Elite CRD / SC8380XP](https://aihub.qualcomm.com/jobs/jpx738olg). The ExecuTorch target is `SC8380XP`, with HTP v73; benchmark again on the Dell Latitude.
 - **Mobile:** use the Galaxy S25 Ultra or S25 family entry. Snapdragon 8 Elite uses ExecuTorch target `SM8750`, with HTP v79.
 - **XR:** verify Galaxy XR availability in the live catalog. A Snapdragon XR2 Gen 2 reference entry is not the Galaxy XR headset; confirm the headset's target mapping and QNN runtime support before export.
-- **IoT:** AI Hub publishes [VENTUNO Q / QCS8275 NPU results](https://aihub.qualcomm.com/jobs/jgdd7k7rg). Run inference on the Linux processor; use the STM32 for real-time control.
+- **IoT:** AI Hub publishes [VENTUNO Q / QCS8275 NPU results](https://aihub.qualcomm.com/jobs/jgdd7k7rg). Follow the standalone [VENTUNO Q setup and compatibility checks](IoT/README.md#setup-and-compatibility) for the board's ExecuTorch/QNN build. Run inference on Linux and connect to the STM32 through Arduino Bridge for sensing and real-time control.
 
 Check the [ExecuTorch chipset mapping](https://github.com/pytorch/executorch/blob/v1.5.1/backends/qualcomm/serialization/qc_schema.py) for your release. AI Hub results from another runtime do not establish ExecuTorch compatibility.
