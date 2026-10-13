@@ -1,33 +1,63 @@
 # Mobile + XR Guide: Samsung Galaxy S25 Ultra and Galaxy XR
-## Developer Guide
 
-This technical guide provides a comprehensive workflow for developers participating in the **Qualcomm × Meta ExecuTorch Hackathon**.
+This guide covers exporting and running ExecuTorch models on Galaxy S25 Ultra and Galaxy XR Devices powered by Qualcomm Snapdragon, with an emphasis on NPU delegation and measured performance.
 
----
+[All tracks](../README.md) · [Accompanying artifacts](artifacts/README.md)
 
 ## Contents
 
-1. [Core Architectural Concepts](#1-core-architectural-concepts)
-   - [Why ExecuTorch?](#why-executorch)
-   - [PyTorch to ExecuTorch Workflow](#pytorch-to-executorch-workflow)
-   - [Backend Stack Hierarchy](#backend-stack-hierarchy)
-2. [ExecuTorch Runtime Overview](#2-executorch-runtime-overview)
-3. [Qualcomm AI Engine Backend QNN](#3-qualcomm-ai-engine-backend-qnn)
-4. [Setup](#4-setup)
-5. [Models and Deployment Strategies](#5-models-and-deployment-strategies)
-   - [Choose Your Model Workflow](#choose-your-model-workflow)
-   - [Recommended Hackathon Path: Use a Precompiled `.pte` Model](#recommended-hackathon-path-use-a-precompiled-pte-model)
-   - [Advanced Path: Compile Your Own Model](#advanced-path-compile-your-own-model)
-6. [Android Development Workflow](#6-android-development-workflow)
-7. [Testing](#7-testing)
-8. [Additional Resources](#8-additional-resources)
-9. [Device Details](#9-device-details)
+- [Mobile + XR Guide: Samsung Galaxy S25 Ultra and Galaxy XR](#mobile--xr-guide-samsung-galaxy-s25-ultra-and-galaxy-xr)
+  - [Contents](#contents)
+  - [Core Architectural Concepts](#core-architectural-concepts)
+    - [Why ExecuTorch?](#why-executorch)
+    - [PyTorch to ExecuTorch Workflow](#pytorch-to-executorch-workflow)
+    - [Backend Stack Hierarchy](#backend-stack-hierarchy)
+  - [ExecuTorch Runtime Overview](#executorch-runtime-overview)
+    - [ExecuTorch × Qualcomm AI Runtime QAIRT](#executorch--qualcomm-ai-runtime-qairt)
+  - [Qualcomm AI Engine Backend QNN](#qualcomm-ai-engine-backend-qnn)
+    - [Hardware Optimization](#hardware-optimization)
+  - [Setup](#setup)
+    - [Create a Python Environment](#create-a-python-environment)
+    - [Clone ExecuTorch](#clone-executorch)
+    - [Install Dependencies](#install-dependencies)
+    - [Optional Qualcomm SDK and Android NDK Setup](#optional-qualcomm-sdk-and-android-ndk-setup)
+      - [QAIRT SDK](#qairt-sdk)
+      - [Android NDK](#android-ndk)
+      - [QAIRT Runtime Libraries](#qairt-runtime-libraries)
+    - [Build ExecuTorch](#build-executorch)
+      - [Path 1: Use a Coding Agent](#path-1-use-a-coding-agent)
+      - [Path 2: Use the Qualcomm Build Script](#path-2-use-the-qualcomm-build-script)
+  - [Models and Deployment Strategies](#models-and-deployment-strategies)
+    - [Compiling Models](#compiling-models)
+      - [Common Arguments](#common-arguments)
+      - [Example Pattern](#example-pattern)
+  - [Android Development Workflow](#android-development-workflow)
+    - [Build the Android Runtime](#build-the-android-runtime)
+    - [Integrate the Runtime Using an ARR/AAR](#integrate-the-runtime-using-an-arraar)
+    - [Load the Model](#load-the-model)
+    - [Run Inference](#run-inference)
+    - [Backend Selection](#backend-selection)
+  - [Testing](#testing)
+    - [Correctness Checks](#correctness-checks)
+    - [Performance Measurements](#performance-measurements)
+    - [Backend Comparison](#backend-comparison)
+  - [Added Backend Extension — XNNPACK and Vulkan](#added-backend-extension--xnnpack-and-vulkan)
+    - [Backend Selection](#backend-selection-1)
+    - [Additional Host Parameters](#additional-host-parameters)
+    - [Build the Shared ARM64 Runner](#build-the-shared-arm64-runner)
+    - [XNNPACK Path — CPU](#xnnpack-path--cpu)
+    - [Vulkan Path — Adreno GPU](#vulkan-path--adreno-gpu)
+    - [Using Attendee-Downloaded Precompiled Models](#using-attendee-downloaded-precompiled-models)
+    - [Compare XNNPACK and Vulkan Outputs](#compare-xnnpack-and-vulkan-outputs)
+      - [Validate on a real image (recommended)](#validate-on-a-real-image-recommended)
+      - [Quantized XNNPACK (INT8)](#quantized-xnnpack-int8)
+    - [Backend-Specific Troubleshooting](#backend-specific-troubleshooting)
+  - [Additional Resources](#additional-resources)
+  - [Device Details](#device-details)
 
----
+## Core Architectural Concepts
 
-# 1. Core Architectural Concepts
-
-## Why ExecuTorch?
+### Why ExecuTorch?
 
 ExecuTorch is PyTorch's on-device inference framework, designed to bring AI models from development to deployment across mobile, edge, and embedded devices.
 
@@ -48,7 +78,7 @@ This architecture supports responsive, offline, and privacy-preserving AI experi
 - Generative AI assistants
 - Edge AI applications
 
-## PyTorch to ExecuTorch Workflow
+### PyTorch to ExecuTorch Workflow
 
 ExecuTorch starts with a native PyTorch model and produces a hardware-specific `.pte` artifact. The artifact is then loaded by the ExecuTorch Runtime for on-device inference.
 
@@ -74,21 +104,19 @@ Understanding the relationship between **export**, **lowering**, and **runtime e
 - **Lowering** maps supported operations to a selected hardware backend.
 - **Runtime execution** loads the resulting `.pte` artifact and runs inference on the target device.
 
-## Backend Stack Hierarchy
+### Backend Stack Hierarchy
 
 ExecuTorch supports multiple acceleration backends. Select the backend according to the target hardware, model compatibility, and performance requirements.
 
-| Backend | Capability | Optimal use case |
-|---|---|---|
-| **XNNPACK CPU** | Portable CPU acceleration and broad operator compatibility | Maximum compatibility and CPU fallback |
-| **Vulkan GPU** | Parallel GPU acceleration | GPU-based mobile inference |
-| **Qualcomm QNN NPU** | Snapdragon-specific AI acceleration | Highest performance and efficiency when supported |
+| Backend              | Capability                                                 | Optimal use case                                  |
+| -------------------- | ---------------------------------------------------------- | ------------------------------------------------- |
+| **XNNPACK CPU**      | Portable CPU acceleration and broad operator compatibility | Maximum compatibility and CPU fallback            |
+| **Vulkan GPU**       | Parallel GPU acceleration                                  | GPU-based mobile inference                        |
+| **Qualcomm QNN NPU** | Snapdragon-specific AI acceleration                        | Highest performance and efficiency when supported |
 
 > **For Snapdragon devices:** Qualcomm QNN is the preferred backend when the required device access, SDK, and signing conditions are available. XNNPACK and Vulkan provide practical alternatives when QNN/NPU deployment is unavailable or restricted.
 
----
-
-# 2. ExecuTorch Runtime Overview
+## ExecuTorch Runtime Overview
 
 The recommended Snapdragon architecture is:
 
@@ -116,7 +144,7 @@ ExecuTorch Runtime
         └── Vulkan backend  ──► Adreno GPU
 ```
 
-## ExecuTorch × Qualcomm AI Runtime QAIRT
+### ExecuTorch × Qualcomm AI Runtime QAIRT
 
 The QNN deployment workflow is:
 
@@ -128,11 +156,9 @@ The QNN deployment workflow is:
 
 Documentation: [ExecuTorch Qualcomm Backend](https://docs.pytorch.org/executorch/stable/backends-qualcomm.html)
 
----
+## Qualcomm AI Engine Backend QNN
 
-# 3. Qualcomm AI Engine Backend QNN
-
-## Hardware Optimization
+### Hardware Optimization
 
 The Qualcomm QNN backend is designed to map supported model operations to Snapdragon AI hardware. A successful QNN workflow generally requires:
 
@@ -146,11 +172,9 @@ If QNN/NPU access is unavailable for a target device, use an XNNPACK or Vulkan b
 
 > **Galaxy XR:** QNN/NPU access is not available to third-party code on retail Galaxy XR units (validated 2026-10-12 on firmware `I610UEU2AZF3`). FastRPC refuses to create a CDSP process from `adb shell` and from installed apps, in both unsigned and signed process-domain modes. Use the XNNPACK or Vulkan path for the XR track.
 
----
+## Setup
 
-# 4. Setup
-
-## Create a Python Environment
+### Create a Python Environment
 
 ```bash
 python3 -m venv .venv
@@ -163,7 +187,7 @@ On Windows PowerShell, activate the environment with:
 .venv\Scripts\Activate.ps1
 ```
 
-## Clone ExecuTorch
+### Clone ExecuTorch
 
 ```bash
 git clone https://github.com/pytorch/executorch.git
@@ -173,7 +197,7 @@ git submodule sync
 git submodule update --init --recursive
 ```
 
-## Install Dependencies
+### Install Dependencies
 
 Use a release tag rather than `main`, which can pin nightly packages that have expired. Check out the newest tag (validated with `v1.5.1`) before installing:
 
@@ -185,17 +209,17 @@ git submodule sync && git submodule update --init --recursive
 
 > The repository has no top-level `requirements.txt`; `install_executorch.sh` installs PyTorch, the pinned dependencies and ExecuTorch itself.
 
-## Optional Qualcomm SDK and Android NDK Setup
+### Optional Qualcomm SDK and Android NDK Setup
 
 The build scripts may download or configure some required artifacts automatically. Alternatively, install them manually and set the required environment variables.
 
-### QAIRT SDK
+#### QAIRT SDK
 
 ```bash
 export QNN_SDK_ROOT=<path_to_qnn_sdk>/2.46.0.260424/
 ```
 
-### Android NDK
+#### Android NDK
 
 ```bash
 export ANDROID_NDK_ROOT=<path_to_android_ndk>
@@ -203,7 +227,7 @@ export ANDROID_NDK_ROOT=<path_to_android_ndk>
 
 > **Important:** Use Android NDK 26 for this workflow.
 
-### QAIRT Runtime Libraries
+#### QAIRT Runtime Libraries
 
 Replace `<specific-toolchain>` with the appropriate toolchain directory for the host environment:
 
@@ -211,9 +235,9 @@ Replace `<specific-toolchain>` with the appropriate toolchain directory for the 
 export LD_LIBRARY_PATH="$QNN_SDK_ROOT/lib/<specific-toolchain>:$LD_LIBRARY_PATH"
 ```
 
-## Build ExecuTorch
+### Build ExecuTorch
 
-### Path 1: Use a Coding Agent
+#### Path 1: Use a Coding Agent
 
 You may use your preferred coding agent to generate the build commands.
 
@@ -223,7 +247,7 @@ Suggested prompt:
 
 Review all generated commands before executing them.
 
-### Path 2: Use the Qualcomm Build Script
+#### Path 2: Use the Qualcomm Build Script
 
 From the ExecuTorch repository root:
 
@@ -231,26 +255,24 @@ From the ExecuTorch repository root:
 ./backends/qualcomm/scripts/build.sh
 ```
 
----
+## Models and Deployment Strategies
 
-# 5. Models and Deployment Strategies
-
-## Compiling Models
+### Compiling Models
 
 The Qualcomm examples provide scripts for exporting and compiling models. Refer to the examples directory:
 
 [ExecuTorch Qualcomm OSS scripts](https://github.com/pytorch/executorch/tree/main/examples/qualcomm/oss_scripts)
 
-### Common Arguments
+#### Common Arguments
 
-| Argument | Description |
-|---|---|
-| `--build_folder build-android` | Uses the Android build directory created during the ExecuTorch build |
-| `--soc_model SM8750` | Selects the target Snapdragon SoC model; Galaxy S25 uses SM8750 |
-| `--decoder_model <model_to_compile>` | Selects the model to compile |
-| `--compile_only` | Generates the `.pte` artifact without running inference |
+| Argument                             | Description                                                          |
+| ------------------------------------ | -------------------------------------------------------------------- |
+| `--build_folder build-android`       | Uses the Android build directory created during the ExecuTorch build |
+| `--soc_model SM8750`                 | Selects the target Snapdragon SoC model; Galaxy S25 uses SM8750      |
+| `--decoder_model <model_to_compile>` | Selects the model to compile                                         |
+| `--compile_only`                     | Generates the `.pte` artifact without running inference              |
 
-### Example Pattern
+#### Example Pattern
 
 ```bash
 python <qualcomm_compile_script>.py \
@@ -262,11 +284,9 @@ python <qualcomm_compile_script>.py \
 
 > The exact script name and model arguments depend on the example being used. Check the current ExecuTorch Qualcomm examples before running the command.
 
----
+## Android Development Workflow
 
-# 6. Android Development Workflow
-
-## Build the Android Runtime
+### Build the Android Runtime
 
 From the ExecuTorch repository root:
 
@@ -278,7 +298,7 @@ The resulting Android library can be packaged into an application as an Android 
 
 > **Not yet validated on device.** The app path in this section (AAR, `Module.load`, `module.forward`) has not been run on the Galaxy XR. The Vulkan backend is only included in the AAR if the library build enables it.
 
-## Integrate the Runtime Using an ARR/AAR
+### Integrate the Runtime Using an ARR/AAR
 
 Place the generated archive in the application's `libs` directory and add it to the module-level Gradle file:
 
@@ -290,7 +310,7 @@ dependencies {
 
 > The archive is commonly referred to as an **AAR**: Android Archive.
 
-## Load the Model
+### Load the Model
 
 ```java
 Module module = Module.load("MODEL.pte");
@@ -298,7 +318,7 @@ Module module = Module.load("MODEL.pte");
 
 For a model stored in the application's assets or copied to an accessible filesystem location, first resolve the appropriate local path and then pass that path to `Module.load`.
 
-## Run Inference
+### Run Inference
 
 ```java
 module.forward(/* model inputs */);
@@ -306,23 +326,21 @@ module.forward(/* model inputs */);
 
 The exact input objects depend on the model's exported signature. Ensure that the input tensor shapes, data types, layout, and preprocessing match the model used to generate the `.pte` artifact.
 
-## Backend Selection
+### Backend Selection
 
 The application must use a runtime configuration compatible with the model artifact.
 
-| Model artifact | Runtime backend |
-|---|---|
-| QNN `.pte` | Qualcomm QNN runtime and required QAIRT components |
-| XNNPACK `.pte` | ExecuTorch XNNPACK backend |
-| Vulkan `.pte` | ExecuTorch Vulkan backend and compatible Vulkan device/driver |
+| Model artifact | Runtime backend                                               |
+| -------------- | ------------------------------------------------------------- |
+| QNN `.pte`     | Qualcomm QNN runtime and required QAIRT components            |
+| XNNPACK `.pte` | ExecuTorch XNNPACK backend                                    |
+| Vulkan `.pte`  | ExecuTorch Vulkan backend and compatible Vulkan device/driver |
 
----
-
-# 7. Testing
+## Testing
 
 Test both correctness and performance on the target device.
 
-## Correctness Checks
+### Correctness Checks
 
 - Confirm that the model loads without an exception.
 - Verify that input preprocessing matches the model's expected format.
@@ -330,7 +348,7 @@ Test both correctness and performance on the target device.
 - Compare representative outputs against a known-good reference.
 - Test multiple input samples, not only one image or prompt.
 
-## Performance Measurements
+### Performance Measurements
 
 Measure:
 
@@ -342,7 +360,7 @@ Measure:
 - Battery impact
 - Thermal behavior during sustained inference
 
-## Backend Comparison
+### Backend Comparison
 
 When comparing XNNPACK, Vulkan, and QNN results, use the same:
 
@@ -355,50 +373,23 @@ When comparing XNNPACK, Vulkan, and QNN results, use the same:
 
 Numerical outputs may differ slightly between backends because of differences in kernels, precision, operator implementation, and hardware execution. Compare tolerances and task-level accuracy rather than requiring byte-for-byte identical output.
 
----
-
-# 8. Additional Resources
-
-- [ExecuTorch Documentation](https://docs.pytorch.org/executorch/)
-- [PyTorch Export Documentation](https://pytorch.org/docs/stable/export.html)
-- [Qualcomm AI Hub](https://aihub.qualcomm.com/)
-- [ExecuTorch GitHub Repository](https://github.com/pytorch/executorch)
-- [ExecuTorch Qualcomm Backend Documentation](https://docs.pytorch.org/executorch/stable/backends-qualcomm.html)
-
----
-
-# 9. Device Details
-
-| Property | Mobile track | XR track |
-|---|---|---|
-| **Device name** | Samsung Galaxy S25 Ultra | Samsung Galaxy XR |
-| **Chipset** | Snapdragon® 8 Elite for Galaxy — SM8750-AC | Snapdragon XR2+ Gen 2 |
-| **SoC model** | SM8750 | SXR2230P (`ro.soc.model`) |
-| **Hexagon version** | v79 | v69 (not accessible on retail units) |
-| **GPU** | Adreno | Adreno (Vulkan driver `vulkan.adreno.so`) |
-| **Android API level** | — | 34 |
-| **Supported backends** | QNN, XNNPACK, Vulkan | XNNPACK, Vulkan |
-
-> Verify these values against the actual target device before compiling a model, for example with `adb shell getprop ro.soc.model`.
-
-
-# Added Backend Extension — XNNPACK and Vulkan
+## Added Backend Extension — XNNPACK and Vulkan
 
 The mobile guide above is retained as the baseline Qualcomm × Meta ExecuTorch Hackathon workflow. The following additions provide the flags, parameters, artifacts, and runtime commands required to support XNNPACK on the CPU and Vulkan on the GPU. These additions do not replace the mobile/QNN workflow; they add two alternative backend paths.
 
 > **Validation status:** every command in this section was run on a retail Samsung Galaxy XR (SXR2230P, Android API 34) on 2026-10-12, using ExecuTorch `v1.5.1`, Android NDK r26c, Vulkan SDK 1.4.341.1 and a WSL Ubuntu 22.04 host. Measured results are listed under each path.
 
-## Backend Selection
+### Backend Selection
 
-| Backend | Target | Model artifact | Required build option |
-|---|---|---|---|
-| XNNPACK | CPU | XNNPACK-compatible `.pte` | `-DEXECUTORCH_BUILD_XNNPACK=ON` |
-| Vulkan | Adreno GPU | Vulkan-compatible FP16 `.pte` | `-DEXECUTORCH_BUILD_VULKAN=ON` plus `-DGLSLC_PATH=...` |
-| QNN | Qualcomm accelerator/NPU | QNN-compatible `.pte` | Existing mobile-guide QNN workflow |
+| Backend | Target                   | Model artifact                | Required build option                                  |
+| ------- | ------------------------ | ----------------------------- | ------------------------------------------------------ |
+| XNNPACK | CPU                      | XNNPACK-compatible `.pte`     | `-DEXECUTORCH_BUILD_XNNPACK=ON`                        |
+| Vulkan  | Adreno GPU               | Vulkan-compatible FP16 `.pte` | `-DEXECUTORCH_BUILD_VULKAN=ON` plus `-DGLSLC_PATH=...` |
+| QNN     | Qualcomm accelerator/NPU | QNN-compatible `.pte`         | Existing mobile-guide QNN workflow                     |
 
 For the XR extension, build one ARM64 Android runner with both XNNPACK and Vulkan enabled. Select the backend through the precompiled model artifact rather than rebuilding the runner for each model.
 
-## Additional Host Parameters
+### Additional Host Parameters
 
 Set these in the Linux host environment. Adapt paths to the workshop machine:
 
@@ -442,7 +433,7 @@ Expected on Galaxy XR: `device`, `arm64-v8a`, `34`, a build fingerprint, `adreno
 
 `GLSLC_PATH` must point to an executable `glslc` shader compiler. Vulkan builds require this compiler to generate the shader assets used by the Vulkan backend.
 
-## Build the Shared ARM64 Runner
+### Build the Shared ARM64 Runner
 
 Run from the ExecuTorch repository root. These are the additional CMake flags for XNNPACK and Vulkan:
 
@@ -483,7 +474,7 @@ adb -s "$DEVICE" push "$RUNNER" "$REMOTE_DIR/executor_runner"
 adb -s "$DEVICE" shell "chmod 755 $REMOTE_DIR/executor_runner"
 ```
 
-## XNNPACK Path — CPU
+### XNNPACK Path — CPU
 
 Generate or use the precompiled XNNPACK artifact. The example below creates an FP32 MobileNet V2 artifact:
 
@@ -515,7 +506,7 @@ Expected validation: five successful executions, a 4,000-byte output file for th
 
 Measured on Galaxy XR: model load about 20 ms, 5 executions in about 35 ms, steady-state latency about 4.6 ms per inference.
 
-## Vulkan Path — Adreno GPU
+### Vulkan Path — Adreno GPU
 
 Generate or use the precompiled Vulkan artifact. The example below creates an FP16 MobileNet V2 artifact:
 
@@ -549,7 +540,7 @@ Expected validation: five successful executions, a 4,000-byte output file for th
 
 Measured on Galaxy XR: model load about 440–1,040 ms (GPU pipeline creation), 5 executions in about 27 ms, steady-state latency about 5.4 ms per inference.
 
-## Using Attendee-Downloaded Precompiled Models
+### Using Attendee-Downloaded Precompiled Models
 
 Attendees may skip the export commands when a track artifact has already been downloaded. They must use the artifact built for the intended backend:
 
@@ -571,7 +562,7 @@ adb -s "$DEVICE" shell "cd $REMOTE_DIR && ./executor_runner \
 
 The runner does not convert a QNN, XNNPACK, or Vulkan artifact into another backend at runtime. Distribute the backend name, expected input format, model hash, and expected output shape with every precompiled `.pte` file.
 
-## Compare XNNPACK and Vulkan Outputs
+### Compare XNNPACK and Vulkan Outputs
 
 ```bash
 adb -s "$DEVICE" pull "$REMOTE_DIR/xnnpack-0.bin" "$WORK_DIR/xnnpack-0.bin"
@@ -593,7 +584,7 @@ The two backends may use different numeric paths, such as FP32 on XNNPACK and FP
 
 > **This check runs on an all-ones input.** Without `--inputs`, `executor_runner` fills every input with 1.0. Both backends report top-1 index 885 ("velvet"), which is what MobileNet V2 predicts for a flat, featureless image. It confirms the pipeline runs, not that the model is correct.
 
-### Validate on a real image (recommended)
+#### Validate on a real image (recommended)
 
 Feed both backends the same preprocessed image and compare against PyTorch on the host. Replace `photo.jpg` with any test image:
 
@@ -632,31 +623,43 @@ PY
 
 Measured on Galaxy XR with three PASCAL VOC images: XNNPACK FP32 matched PyTorch exactly (top-1 3/3, top-5 5/5, cosine 1.0000); Vulkan FP16 matched top-1 on 3/3 images with cosine 0.9999.
 
-### Quantized XNNPACK (INT8)
+#### Quantized XNNPACK (INT8)
 
 `python -m examples.xnnpack.aot_compiler --model_name mv2 --quantize --output_dir "$WORK_DIR"` produces `mv2_xnnpack_q8.pte` (static per-channel INT8). It runs about 30% faster than FP32 on Galaxy XR (about 3.3 ms steady state), but the script calibrates on a single random tensor, so accuracy is poor: on the same three images it matched PyTorch's top-1 on only 1/3 (cosine down to 0.84). Treat it as a smoke test of the INT8 path. For a real project, calibrate with a few hundred representative inputs using `prepare_pt2e` / `convert_pt2e` and `XNNPACKQuantizer`.
 
-## Backend-Specific Troubleshooting
+### Backend-Specific Troubleshooting
 
-| Symptom | Check |
-|---|---|
-| `Use of 'EXECUTORCH_BUILD_EXECUTOR_RUNNER' requires 'EXECUTORCH_BUILD_EXTENSION_EVALUE_UTIL'` | Add `-DEXECUTORCH_BUILD_EXTENSION_EVALUE_UTIL=ON`, delete the build directory, and configure again. |
-| `glslc from the Vulkan SDK must be installed` or `GL_EXT_integer_dot_product` errors | Use `glslc` from the LunarG Vulkan SDK 1.4.341.1 or newer, not the NDK's. |
-| Vulkan build fails during configuration | Confirm `GLSLC_PATH` points to an executable `glslc`. |
-| Vulkan model fails to load | Confirm the runner was built with `-DEXECUTORCH_BUILD_VULKAN=ON` and the artifact was exported with `--force_fp16`. |
-| XNNPACK model fails to load | Confirm the runner was built with `-DEXECUTORCH_BUILD_XNNPACK=ON` and the artifact is an XNNPACK artifact. |
-| Runner exits without an output file | Check the runner, model path, execute permission, and `ExecuTorch` logcat output. |
-| `unauthorized` or `offline` in ADB | Reconnect debugging and accept the headset authorization prompt. |
-| `adb devices` is empty after a reboot (wireless debugging) | The port changed. Run `adb connect <ip>:<new-port>` and update `DEVICE`. |
-| `rg: command not found` | Use `grep -E`, or install ripgrep (`sudo apt install ripgrep`). |
-| Vulkan logcat has no Adreno/Vulkan initialization | Verify the model is Vulkan-compatible and inspect the complete logcat, including vendor Vulkan messages. |
+| Symptom                                                                                       | Check                                                                                                               |
+| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `Use of 'EXECUTORCH_BUILD_EXECUTOR_RUNNER' requires 'EXECUTORCH_BUILD_EXTENSION_EVALUE_UTIL'` | Add `-DEXECUTORCH_BUILD_EXTENSION_EVALUE_UTIL=ON`, delete the build directory, and configure again.                 |
+| `glslc from the Vulkan SDK must be installed` or `GL_EXT_integer_dot_product` errors          | Use `glslc` from the LunarG Vulkan SDK 1.4.341.1 or newer, not the NDK's.                                           |
+| Vulkan build fails during configuration                                                       | Confirm `GLSLC_PATH` points to an executable `glslc`.                                                               |
+| Vulkan model fails to load                                                                    | Confirm the runner was built with `-DEXECUTORCH_BUILD_VULKAN=ON` and the artifact was exported with `--force_fp16`. |
+| XNNPACK model fails to load                                                                   | Confirm the runner was built with `-DEXECUTORCH_BUILD_XNNPACK=ON` and the artifact is an XNNPACK artifact.          |
+| Runner exits without an output file                                                           | Check the runner, model path, execute permission, and `ExecuTorch` logcat output.                                   |
+| `unauthorized` or `offline` in ADB                                                            | Reconnect debugging and accept the headset authorization prompt.                                                    |
+| `adb devices` is empty after a reboot (wireless debugging)                                    | The port changed. Run `adb connect <ip>:<new-port>` and update `DEVICE`.                                            |
+| `rg: command not found`                                                                       | Use `grep -E`, or install ripgrep (`sudo apt install ripgrep`).                                                     |
+| Vulkan logcat has no Adreno/Vulkan initialization                                             | Verify the model is Vulkan-compatible and inspect the complete logcat, including vendor Vulkan messages.            |
 
-## Added Completion Criteria
+## Additional Resources
 
-- Shared `arm64-v8a` runner built with XNNPACK and Vulkan enabled.
-- XNNPACK `.pte` artifact hash recorded and executed successfully.
-- Vulkan FP16 `.pte` artifact hash recorded and executed successfully.
-- Logcat confirms the expected backend initialization.
-- Output files contain the expected number of finite values.
-- On a real image, each backend's top-1 matches the PyTorch reference.
-- Model metadata records backend, input format, output shape, hash, and expected runtime.
+- [ExecuTorch Documentation](https://docs.pytorch.org/executorch/)
+- [PyTorch Export Documentation](https://pytorch.org/docs/stable/export.html)
+- [Qualcomm AI Hub](https://aihub.qualcomm.com/)
+- [ExecuTorch GitHub Repository](https://github.com/pytorch/executorch)
+- [ExecuTorch Qualcomm Backend Documentation](https://docs.pytorch.org/executorch/stable/backends-qualcomm.html)
+
+## Device Details
+
+| Property               | Mobile track                               | XR track                                  |
+| ---------------------- | ------------------------------------------ | ----------------------------------------- |
+| **Device name**        | Samsung Galaxy S25 Ultra                   | Samsung Galaxy XR                         |
+| **Chipset**            | Snapdragon® 8 Elite for Galaxy — SM8750-AC | Snapdragon XR2+ Gen 2                     |
+| **SoC model**          | SM8750                                     | SXR2230P (`ro.soc.model`)                 |
+| **Hexagon version**    | v79                                        | v69 (not accessible on retail units)      |
+| **GPU**                | Adreno                                     | Adreno (Vulkan driver `vulkan.adreno.so`) |
+| **Android API level**  | —                                          | 34                                        |
+| **Supported backends** | QNN, XNNPACK, Vulkan                       | XNNPACK, Vulkan                           |
+
+> Verify these values against the actual target device before compiling a model, for example with `adb shell getprop ro.soc.model`.
