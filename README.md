@@ -3,7 +3,7 @@
 Build on-device AI applications with PyTorch ExecuTorch on Qualcomm-powered PCs, phones, XR headsets, and IoT devices.
 
 > [!NOTE]
-> If you're participating in a Qualcomm event, start with your device's track, then follow its setup, model export, deployment, and profiling instructions.
+> If you're participating in a Qualcomm event, start with your device's track, then follow its prepared-model setup, deployment, and demo checks.
 
 ## Start with your track
 
@@ -16,7 +16,20 @@ Build on-device AI applications with PyTorch ExecuTorch on Qualcomm-powered PCs,
 > [!IMPORTANT]
 > **Read the documentation for the track you have been shortlisted for before starting your project. The other tracks are not prerequisites and do not need to be completed.** For independent projects, choose the track that matches your target device.
 >
-> Each track is independent, with its own setup, model export, deployment, and verification instructions. Follow only your selected track's `README.md`; `artifacts/` holds its accompanying files as they become available.
+> Each track is independent, with its own setup, deployment, and verification instructions. Follow only your selected track's `README.md`; `artifacts/` holds its accompanying files as they become available.
+
+## Start with the supplied models
+
+**ExecuTorch models will be preinstalled on Compute devices and available to install for Mobile, XR, and IoT. Participants do not need to download and compile ExecuTorch from scratch.** Run the supplied model with its matching runtime first; custom model export and runtime source builds are optional appendix material.
+
+| Track | First working demo | Start here |
+| --- | --- | --- |
+| Compute | Local image segmentation on the X Elite PC | [Compute attendee journey](Compute/README.md#attendee-journey) |
+| Mobile | Phone input to a visible inference result | [Mobile attendee journey](Mobile-XR/README.md#attendee-journey) |
+| XR | Headset inference with XNNPACK CPU or Vulkan GPU | [Install the XR demo](Mobile-XR/README.md#install-the-xr-demo-files) |
+| IoT | Linux inference connected to an MCU response | [IoT attendee journey](IoT/README.md#attendee-journey) |
+
+The artifact pages identify available files and remaining distribution requirements. The XR model ZIP is included; its runner, the Mobile and IoT install bundles, and the Compute installation location still need to be supplied by the track team. Do not substitute a model or runtime from another track to fill a missing file.
 
 ## How ExecuTorch and QNN fit together
 
@@ -31,7 +44,7 @@ Application → ExecuTorch runtime → QNN HTP → Qualcomm Hexagon NPU
 
 An NPU-equipped device does not automatically accelerate a CPU-exported model. NPU execution requires a model lowered for that target, the Qualcomm backend, and compatible device runtime libraries. Operations outside the delegated partitions need another supported execution path, often CPU kernels.
 
-## From model to verified NPU inference
+## Optional: From your own model to verified NPU inference
 
 1. **Check the target and versions.** Follow your track's host tools, target OS, ExecuTorch release, QAIRT/QNN version, and driver requirements. Keep export and runtime versions aligned; use libraries built for the device's OS and architecture.
 2. **Start with a small model and real inputs.** Confirm the PyTorch outputs and input shapes first. For quantized models, calibrate with representative data and check accuracy on held-out inputs.
@@ -44,7 +57,7 @@ After [AI Hub setup](https://workbench.aihub.qualcomm.com/docs/hub/getting_start
 
 - **Compute:** AI Hub lists [Snapdragon X Elite CRD / SC8380XP](https://aihub.qualcomm.com/jobs/jpx738olg). The ExecuTorch target is `SC8380XP`, with HTP v73; benchmark again on the Dell Latitude.
 - **Mobile:** use the Galaxy S25 Ultra or S25 family entry. Snapdragon 8 Elite uses ExecuTorch target `SM8750`, with HTP v79.
-- **XR:** verify Galaxy XR availability in the live catalog. A Snapdragon XR2 Gen 2 reference entry is not the Galaxy XR headset; confirm the headset's target mapping and QNN runtime support before export.
+- **XR:** follow the guide’s validated XNNPACK CPU or Vulkan GPU path on retail Galaxy XR. Its recorded firmware validation does not permit third-party QNN/NPU execution. A reference-device AI Hub result does not change that restriction.
 - **IoT:** AI Hub publishes [VENTUNO Q / QCS8275 NPU results](https://aihub.qualcomm.com/jobs/jgdd7k7rg). Follow the standalone [VENTUNO Q setup and compatibility checks](IoT/README.md#setup-and-compatibility) for the board's ExecuTorch/QNN build. Run inference on Linux and connect to the STM32 through Arduino Bridge for sensing and real-time control.
 
 Check the [ExecuTorch chipset mapping](https://github.com/pytorch/executorch/blob/v1.5.1/backends/qualcomm/serialization/qc_schema.py) for your release. AI Hub results from another runtime do not establish ExecuTorch compatibility.

@@ -4,9 +4,23 @@ Build an edge AI application on Arduino VENTUNO Q: connect Linux and the microco
 
 [All tracks](../README.md) · [Accompanying artifacts](artifacts/README.md)
 
+## Attendee journey
+
+> [!IMPORTANT]
+> **ExecuTorch models will be available to install for IoT. Participants do not need to download and compile ExecuTorch from scratch, or export the supplied models.** Install the VENTUNO Q track bundle and compatible runtime using the track team's instructions. The [artifact inventory](artifacts/README.md) lists the required files; the model bundle and installation link are not yet included in this repository.
+
+1. **Prepare the board.** Follow [Setup and compatibility](#setup-and-compatibility) using the supplied Linux ARM64 runners and QCS8275 models.
+2. **Prove the hardware connection.** Run [the LED example](#toggle-an-led-from-linux); confirm Linux can control the MCU before connecting inference.
+3. **Run a model.** Use the installed [add model](#part-2-run-the-add-model) for a smoke test, then choose [DINOv2 vision](#part-3-run-and-evaluate-dinov2) or [Qwen text generation](#part-4-run-qwen-06b). You do not need both for your project.
+4. **Close the loop.** Follow [Build your application](#part-5-build-your-application): show an input, its inference result, and a bounded MCU response such as the LED changing state.
+5. **Rehearse on the board.** Check expected outputs and sensor-to-action latency, then repeat after restarting the app. Retain a known input and expected response for the demo.
+
+Your milestone is a repeatable Linux inference-to-MCU interaction. Runtime builds and custom model export are optional appendices.
+
 ## Contents
 
 - [IoT Guide: Arduino VENTUNO Q](#iot-guide-arduino-ventuno-q)
+  - [Attendee journey](#attendee-journey)
   - [Contents](#contents)
   - [Device and runtime architecture](#device-and-runtime-architecture)
   - [Setup and compatibility](#setup-and-compatibility)
@@ -17,7 +31,7 @@ Build an edge AI application on Arduino VENTUNO Q: connect Linux and the microco
     - [Bidirectional RPC peers](#bidirectional-rpc-peers)
     - [How this relates to QNN and FastRPC](#how-this-relates-to-qnn-and-fastrpc)
   - [Part 2: Run the add model](#part-2-run-the-add-model)
-  - [Part 3: Export and evaluate DINOv2](#part-3-export-and-evaluate-dinov2)
+  - [Part 3: Run and evaluate DINOv2](#part-3-run-and-evaluate-dinov2)
   - [Part 4: Run Qwen 0.6B](#part-4-run-qwen-06b)
   - [Part 5: Build your application](#part-5-build-your-application)
   - [Verify accuracy and NPU performance](#verify-accuracy-and-npu-performance)
@@ -28,6 +42,9 @@ Build an edge AI application on Arduino VENTUNO Q: connect Linux and the microco
     - [Build the Qualcomm examples](#build-the-qualcomm-examples)
   - [Appendix B: Command quick reference](#appendix-b-command-quick-reference)
   - [Additional resources](#additional-resources)
+  - [Appendix C: Optional custom model export](#appendix-c-optional-custom-model-export)
+    - [Export the add model](#export-the-add-model)
+    - [Export DINOv2](#export-dinov2)
 
 ## Device and runtime architecture
 
@@ -48,10 +65,9 @@ ExecuTorch captures a PyTorch model, lowers supported operations to a hardware b
 ## Setup and compatibility
 
 1. Complete the board's first-time setup using [Arduino's VENTUNO Q setup guide](https://docs.arduino.cc/tutorials/ventuno-q/sbc-mode-setup/). Use Arduino App Lab for the Python/sketch example and a terminal on the board for native runner commands.
-2. Obtain the board image, ExecuTorch checkout/commit, and matching QAIRT/QNN SDK and runtime packages used for the IoT track. Record the image version, `uname -m`, ExecuTorch commit, and SDK version with your results.
-3. Confirm that the export environment supports **`QCS8275`** and has the QNN AOT Python bindings.
-4. Confirm that `qnn_executor_runner` and, for the LLM example, `qnn_llama_runner` are Linux ARM64 builds compatible with the board's QNN libraries. If they are missing, see [Appendix A](#appendix-a-build-the-runtime-from-source).
-5. Obtain the DINOv2 dataset and the Qwen model/tokenizer separately. See the [artifact inventory](artifacts/README.md) for what is included and what remains external.
+2. Install the track's prepared model/runtime bundle on the supported board image. Record the image version, `uname -m`, and the bundle's ExecuTorch and QAIRT/QNN versions.
+3. Confirm that `qnn_executor_runner` and, for the LLM example, `qnn_llama_runner` are Linux ARM64 builds compatible with the board's QNN libraries. If missing, obtain the compatible runtime from the track team.
+4. Install `add.pte` and your chosen DINOv2 or Qwen bundle, including sample inputs/reference outputs or the matching tokenizer. See the [artifact inventory](artifacts/README.md).
 
 **Prepared-image paths.** The examples below use the directory layout in the supplied document, with `$HOME` in place of its hard-coded `/home/debian`. Set these variables to the actual locations on your board; this does not install the checkout or runners.
 
@@ -60,11 +76,8 @@ export EXECUTORCH_ROOT="$HOME/executorch"
 export MODEL_OUTPUT="$HOME/model_output"
 export QNN_RUNNER="$EXECUTORCH_ROOT/cmake-out/examples/qualcomm/executor_runner/qnn_executor_runner"
 export QNN_LLAMA_RUNNER="$EXECUTORCH_ROOT/cmake-out/examples/qualcomm/executor_runner/qnn_llama_runner"
-export PYTHONPATH="$EXECUTORCH_ROOT/..${PYTHONPATH:+:$PYTHONPATH}"
 mkdir -p "$MODEL_OUTPUT"
 
-cd "$EXECUTORCH_ROOT"
-git rev-parse HEAD
 uname -m
 test -x "$QNN_RUNNER"
 ldd "$QNN_RUNNER"
@@ -72,20 +85,6 @@ ldd "$QNN_RUNNER"
 ```
 
 Stop and resolve missing paths or libraries before continuing. The Qwen runner may instead be under `cmake-out/examples/qualcomm/oss_scripts/llama/`; set `QNN_LLAMA_RUNNER` to the executable your build actually produced.
-
-Activate the Python environment supplied with the checkout before exporting. In that environment, check the target mapping:
-
-```bash
-python - <<'PY'
-from executorch.backends.qualcomm.utils.utils import get_soc_to_chipset_map
-
-targets = get_soc_to_chipset_map()
-assert "QCS8275" in targets, "This checkout lacks the required QCS8275 target"
-print("QCS8275 target:", targets["QCS8275"])
-PY
-```
-
-This check establishes the mapping, not full hardware compatibility. Export also requires functioning QNN bindings and an SDK supported by the board build. If export runs on a separate development host, use the same supported checkout/SDK combination there and transfer the generated artifacts to the board.
 
 The source document sets `/usr/lib` as the DSP library directory:
 
@@ -207,21 +206,7 @@ For inference, export produces the QNN-delegated `.pte`; the ExecuTorch runtime 
 
 ## Part 2: Run the add model
 
-Use the prepared QCS8275 export environment from [Setup and compatibility](#setup-and-compatibility). The add graph is a small pipeline check before trying larger models.
-
-```bash
-cd "$EXECUTORCH_ROOT"
-python -m examples.qualcomm.scripts.export_example --help
-python -m examples.qualcomm.scripts.export_example \
-  --model_name add \
-  --generate_etrecord \
-  --output_folder "$MODEL_OUTPUT/" \
-  --soc QCS8275
-```
-
-Expected output: `add.pte` and profiling metadata under `MODEL_OUTPUT`. The trailing slash also accommodates exporters that construct the ETRecord filename by concatenation. The [upstream exporter](https://github.com/pytorch/executorch/blob/v1.5.1/examples/qualcomm/scripts/export_example.py) selects HTP and uses FP16 when no quantization option is supplied; follow the board checkout's precision requirements. Example-input calibration is sufficient only for this toy graph, not for evaluating a real model's accuracy.
-
-On the board, after transferring the output if export ran elsewhere:
+Use the installed `add.pte` under `MODEL_OUTPUT`. This small graph checks the inference pipeline before larger models. Run on the board:
 
 ```bash
 test -s "$MODEL_OUTPUT/add.pte"
@@ -232,29 +217,9 @@ cd "$MODEL_OUTPUT/add-run"
 
 The [upstream runner](https://github.com/pytorch/executorch/blob/v1.5.1/examples/qualcomm/executor_runner/qnn_executor_runner.cpp) uses default inputs when it cannot open `input_list.txt`. In this fresh run directory, that is a load/execution smoke test. A successful run does not establish numerical correctness, NPU delegation, or speedup; verify those separately below.
 
-## Part 3: Export and evaluate DINOv2
+## Part 3: Run and evaluate DINOv2
 
-DINOv2 introduces a vision transformer and image preprocessing. Prepare a labeled ImageNet-format validation subset, with the class directories and label mapping expected by the supplied script. Keep held-out evaluation data separate from calibration data. Dataset files and model weights are not bundled here.
-
-The document places `dino_v2.py` under `examples/qualcomm/scripts/`. Use that path only if it exists in your board checkout, and inspect its help first:
-
-```bash
-export IMAGENET_VAL="$HOME/datasets/imagenet-mini/val"
-cd "$EXECUTORCH_ROOT"
-python -m examples.qualcomm.scripts.dino_v2 --help
-python -m examples.qualcomm.scripts.dino_v2 \
-  --soc_model QCS8275 \
-  --build_folder "$EXECUTORCH_ROOT/cmake-out" \
-  --artifact "$MODEL_OUTPUT/dino_v2" \
-  --dataset "$IMAGENET_VAL" \
-  --compile_only
-```
-
-`--build_folder` must identify the build directory expected by your script; the example above uses the `cmake-out` tree from Appendix A. Use `build-aot` only if that is the separate tree your supplied environment actually uses.
-
-**`--compile_only` exports the model without on-board evaluation or measured accuracy.** The [shared export utilities](https://github.com/pytorch/executorch/blob/v1.5.1/backends/qualcomm/export_utils.py) exit after compilation in this mode. The inspected [upstream DINOv2 example](https://github.com/pytorch/executorch/blob/v1.5.1/examples/qualcomm/oss_scripts/dino_v2.py) lives in `examples/qualcomm/oss_scripts/`, uses the shared deployment helpers, and is not evidence that the document's board-specific path works on a plain checkout. Confirm the Linux deployment path before attempting its execution mode.
-
-To evaluate on the VENTUNO Q, use the board-specific script's documented Linux evaluation mode, or prepare the `.pte`, preprocessed raw tensors, and a nonempty `input_list.txt` for the board runner. Each line names one sample's input files, separated by single spaces, with the exported shapes, dtypes, and layout. Resolve paths from the runner's working directory and use filenames without spaces.
+Use the installed DINOv2 bundle with its preprocessed sample images, nonempty `input_list.txt`, reference outputs, and label mapping. The runner resolves input paths from the working directory; each line lists one sample's tensor files separated by single spaces. Use filenames without spaces. For new images, follow the bundle's exact shapes, dtypes, layout, and preprocessing.
 
 For a prepared bundle staged under `$MODEL_OUTPUT/dino_v2`:
 
@@ -269,7 +234,7 @@ mkdir -p outputs
   --output_folder_path ./outputs
 ```
 
-Compare outputs with PyTorch on the same images, then calculate top-1/top-5 accuracy with the matching label mapping. The `.pte` and compile-only command alone do not provide that evaluation bundle or calculation. Record preprocessing and dataset details with the results.
+Compare outputs with PyTorch on the same images, then calculate top-1/top-5 accuracy with the matching label mapping. A `.pte` alone does not provide preprocessing, labels, or accuracy evaluation. Record preprocessing and dataset details with the results.
 
 ## Part 4: Run Qwen 0.6B
 
@@ -301,7 +266,7 @@ Model execution can involve multiple delegated partitions and CPU work. Do not a
 
 ## Verify accuracy and NPU performance
 
-Inspect delegation in the exporter, after lowering and before calling `to_executorch()`. Here `edge_manager` is the returned `EdgeProgramManager`:
+For supplied models, use the bundle’s delegation report and reference outputs. If exporting your own model, inspect delegation in the exporter, after lowering and before calling `to_executorch()`. Here `edge_manager` is the returned `EdgeProgramManager`:
 
 ```python
 from executorch.devtools.backend_debug import get_delegation_info
@@ -344,7 +309,7 @@ For file-access diagnostics, prefix the failing export command with `strace -f -
 
 ## Appendix A: Build the runtime from source
 
-Skip this appendix when the prepared image already supplies compatible runners and export tools. These commands adapt the supplied document's native Linux build layout; they are conditional on a **board-supported checkout and SDK**, not a verified recipe for an unmodified upstream release.
+Participants can skip this appendix and use the installable track models and runtime. These commands adapt the supplied document's native Linux build layout; they are conditional on a **board-supported checkout and SDK**, not a verified recipe for an unmodified upstream release.
 
 ### Prepare the checkout and SDK
 
@@ -425,16 +390,16 @@ Check where this checkout emits both runners and update `QNN_RUNNER` and `QNN_LL
 
 These commands assume the environment variables and prerequisites above are already configured.
 
-| Task                   | Command or section                                                              |
-| ---------------------- | ------------------------------------------------------------------------------- |
-| Inspect Router         | `systemctl status arduino-router`                                               |
-| Follow Router logs     | `journalctl -u arduino-router -f`                                               |
-| LED on / off           | `/usr/bin/python3 msgpack_test.py 1` / `/usr/bin/python3 msgpack_test.py 0`     |
-| Inspect export options | `python -m examples.qualcomm.scripts.export_example --help`                     |
-| Run add smoke test     | `"$QNN_RUNNER" --model_path "$MODEL_OUTPUT/add.pte"` from a fresh run directory |
-| Export DINOv2          | [Part 3](#part-3-export-and-evaluate-dinov2); `--compile_only` skips execution  |
-| Generate text          | [Part 4](#part-4-run-qwen-06b); requires the matching Qwen bundle               |
-| Build core and runners | [Appendix A](#appendix-a-build-the-runtime-from-source)                         |
+| Task                   | Command or section                                                                       |
+| ---------------------- | ---------------------------------------------------------------------------------------- |
+| Inspect Router         | `systemctl status arduino-router`                                                        |
+| Follow Router logs     | `journalctl -u arduino-router -f`                                                        |
+| LED on / off           | `/usr/bin/python3 msgpack_test.py 1` / `/usr/bin/python3 msgpack_test.py 0`              |
+| Inspect export options | `python -m examples.qualcomm.scripts.export_example --help`                              |
+| Run add smoke test     | `"$QNN_RUNNER" --model_path "$MODEL_OUTPUT/add.pte"` from a fresh run directory          |
+| Export DINOv2          | [Appendix C](#appendix-c-optional-custom-model-export); `--compile_only` skips execution |
+| Generate text          | [Part 4](#part-4-run-qwen-06b); requires the matching Qwen bundle                        |
+| Build core and runners | [Appendix A](#appendix-a-build-the-runtime-from-source)                                  |
 
 ## Additional resources
 
@@ -444,3 +409,67 @@ These commands assume the environment variables and prerequisites above are alre
 - [ExecuTorch Qualcomm backend](https://docs.pytorch.org/executorch/1.5/backends-qualcomm.html)
 - [Qualcomm model examples](https://github.com/pytorch/executorch/tree/v1.5.1/examples/qualcomm): check the board checkout's differences before using upstream commands
 - [Qualcomm AI Hub](https://aihub.qualcomm.com/): hosted-device results do not replace measurements on your VENTUNO Q
+
+## Appendix C: Optional custom model export
+
+Only use this section when replacing the supplied models. Obtain the board-supported checkout and export environment first; the attendee runtime installation does not require export tools.
+
+Activate the Python environment supplied with the checkout before exporting. In that environment, check the target mapping:
+
+```bash
+python - <<'PY'
+from executorch.backends.qualcomm.utils.utils import get_soc_to_chipset_map
+
+targets = get_soc_to_chipset_map()
+assert "QCS8275" in targets, "This checkout lacks the required QCS8275 target"
+print("QCS8275 target:", targets["QCS8275"])
+PY
+```
+
+This check establishes the mapping, not full hardware compatibility. Export also requires functioning QNN bindings and an SDK supported by the board build. If export runs on a separate development host, use the same supported checkout/SDK combination there and transfer the generated artifacts to the board.
+
+### Export the add model
+
+Use the prepared QCS8275 export environment from [Setup and compatibility](#setup-and-compatibility). The add graph is a small pipeline check before trying larger models.
+
+```bash
+cd "$EXECUTORCH_ROOT"
+python -m examples.qualcomm.scripts.export_example --help
+python -m examples.qualcomm.scripts.export_example \
+  --model_name add \
+  --generate_etrecord \
+  --output_folder "$MODEL_OUTPUT/" \
+  --soc QCS8275
+```
+
+Expected output: `add.pte` and profiling metadata under `MODEL_OUTPUT`. The trailing slash also accommodates exporters that construct the ETRecord filename by concatenation. The [upstream exporter](https://github.com/pytorch/executorch/blob/v1.5.1/examples/qualcomm/scripts/export_example.py) selects HTP and uses FP16 when no quantization option is supplied; follow the board checkout's precision requirements. Example-input calibration is sufficient only for this toy graph, not for evaluating a real model's accuracy.
+
+On the board, after transferring the output if export ran elsewhere:
+
+Return to [Part 2](#part-2-run-the-add-model) to run the generated model.
+
+### Export DINOv2
+
+DINOv2 introduces a vision transformer and image preprocessing. Prepare a labeled ImageNet-format validation subset, with the class directories and label mapping expected by the supplied script. Keep held-out evaluation data separate from calibration data. Dataset files and model weights are not bundled here.
+
+The document places `dino_v2.py` under `examples/qualcomm/scripts/`. Use that path only if it exists in your board checkout, and inspect its help first:
+
+```bash
+export IMAGENET_VAL="$HOME/datasets/imagenet-mini/val"
+cd "$EXECUTORCH_ROOT"
+python -m examples.qualcomm.scripts.dino_v2 --help
+python -m examples.qualcomm.scripts.dino_v2 \
+  --soc_model QCS8275 \
+  --build_folder "$EXECUTORCH_ROOT/cmake-out" \
+  --artifact "$MODEL_OUTPUT/dino_v2" \
+  --dataset "$IMAGENET_VAL" \
+  --compile_only
+```
+
+`--build_folder` must identify the build directory expected by your script; the example above uses the `cmake-out` tree from Appendix A. Use `build-aot` only if that is the separate tree your supplied environment actually uses.
+
+**`--compile_only` exports the model without on-board evaluation or measured accuracy.** The [shared export utilities](https://github.com/pytorch/executorch/blob/v1.5.1/backends/qualcomm/export_utils.py) exit after compilation in this mode. The inspected [upstream DINOv2 example](https://github.com/pytorch/executorch/blob/v1.5.1/examples/qualcomm/oss_scripts/dino_v2.py) lives in `examples/qualcomm/oss_scripts/`, uses the shared deployment helpers, and is not evidence that the document's board-specific path works on a plain checkout. Confirm the Linux deployment path before attempting its execution mode.
+
+To evaluate on the VENTUNO Q, use the board-specific script's documented Linux evaluation mode, or prepare the `.pte`, preprocessed raw tensors, and a nonempty `input_list.txt` for the board runner. Each line names one sample's input files, separated by single spaces, with the exported shapes, dtypes, and layout. Resolve paths from the runner's working directory and use filenames without spaces.
+
+Return to [Part 3](#part-3-run-and-evaluate-dinov2) to evaluate the prepared bundle.

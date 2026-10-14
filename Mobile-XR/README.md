@@ -1,12 +1,44 @@
 # Mobile + XR Guide: Samsung Galaxy S25 Ultra and Galaxy XR
 
-This guide covers exporting and running ExecuTorch models on Galaxy S25 Ultra and Galaxy XR Devices powered by Qualcomm Snapdragon, with an emphasis on NPU delegation and measured performance.
+Build a mobile or immersive demo with installable ExecuTorch models: Galaxy S25 Ultra supports the mobile QNN path; retail Galaxy XR uses the validated XNNPACK CPU or Vulkan GPU path below.
 
 [All tracks](../README.md) · [Accompanying artifacts](artifacts/README.md)
+
+## Attendee journey
+
+> [!IMPORTANT]
+> **ExecuTorch models will be available to install for Mobile and XR. Participants do not need to download and compile ExecuTorch from scratch, or export the supplied models.** Obtain the matching runtime from the track team; model files alone are not an executable demo.
+
+- **Mobile / Galaxy S25 Ultra:** install the SM8750 QNN model and Android runtime bundle supplied for this track. Follow its model-specific launch, preprocessing, and output instructions, then [integrate into your app](#android-development-workflow). Show a camera/image input and a visible inference result. The S25 QNN install bundle and runnable sample are not yet included in this repository; obtain them from the track team before starting. The XR commands below use a different runner and cannot launch QNN artifacts.
+- **XR / Galaxy XR:** download the [XR model ZIP](artifacts/xr-model-bundle.zip), install it as shown below, and run [XNNPACK](#xnnpack-path--cpu) first. Then try [Vulkan](#vulkan-path--adreno-gpu), [validate a real image](#validate-on-a-real-image-recommended), and connect the result to your headset interaction. Retail Galaxy XR NPU access is unavailable in the recorded validation; NPU setup is not a prerequisite.
+
+For either device, your demo should accept a real input, display the result, and repeat after an app restart. Record end-to-end latency and check sustained behavior using [Testing](#testing). Keep phone and headset measurements separate.
+
+## Install the XR demo files
+
+On a Linux or WSL host with Android platform tools (`adb`) and `unzip`, enable debugging on the headset and authorize the host. Run `adb devices` and use the serial shown for your headset. Download the ZIP above, then run from its download directory:
+
+```bash
+export DEVICE=YOUR_ADB_SERIAL
+export WORK_DIR="$HOME/executorch-hackathon/work"
+export REMOTE_DIR=/data/local/tmp/executorch_validation
+mkdir -p "$WORK_DIR"
+unzip xr-model-bundle.zip -d "$WORK_DIR"
+export WORK_DIR="$WORK_DIR/xr-model-bundle"
+cd "$WORK_DIR"
+sha256sum -c SHA256SUMS
+adb -s "$DEVICE" get-state
+export RUNNER=/path/to/supplied/executor_runner
+test -f "$RUNNER"
+```
+
+Replace the serial and runner path before continuing. Expect all three hashes to pass and ADB to report `device`. If no runner was supplied, ask the track team for the ExecuTorch v1.5.1 ARM64 Android runner with XNNPACK and Vulkan support. Next, [stage the runner](#stage-the-supplied-arm64-runner) and follow the CPU/GPU commands. Python, PyTorch, torchvision, NumPy, and Pillow are needed only for the host-side real-image/reference check; use the track's prepared Python environment for that step.
 
 ## Contents
 
 - [Mobile + XR Guide: Samsung Galaxy S25 Ultra and Galaxy XR](#mobile--xr-guide-samsung-galaxy-s25-ultra-and-galaxy-xr)
+  - [Attendee journey](#attendee-journey)
+  - [Install the XR demo files](#install-the-xr-demo-files)
   - [Contents](#contents)
   - [Core Architectural Concepts](#core-architectural-concepts)
     - [Why ExecuTorch?](#why-executorch)
@@ -16,24 +48,8 @@ This guide covers exporting and running ExecuTorch models on Galaxy S25 Ultra an
     - [ExecuTorch × Qualcomm AI Runtime QAIRT](#executorch--qualcomm-ai-runtime-qairt)
   - [Qualcomm AI Engine Backend QNN](#qualcomm-ai-engine-backend-qnn)
     - [Hardware Optimization](#hardware-optimization)
-  - [Setup](#setup)
-    - [Create a Python Environment](#create-a-python-environment)
-    - [Clone ExecuTorch](#clone-executorch)
-    - [Install Dependencies](#install-dependencies)
-    - [Optional Qualcomm SDK and Android NDK Setup](#optional-qualcomm-sdk-and-android-ndk-setup)
-      - [QAIRT SDK](#qairt-sdk)
-      - [Android NDK](#android-ndk)
-      - [QAIRT Runtime Libraries](#qairt-runtime-libraries)
-    - [Build ExecuTorch](#build-executorch)
-      - [Path 1: Use a Coding Agent](#path-1-use-a-coding-agent)
-      - [Path 2: Use the Qualcomm Build Script](#path-2-use-the-qualcomm-build-script)
-  - [Models and Deployment Strategies](#models-and-deployment-strategies)
-    - [Compiling Models](#compiling-models)
-      - [Common Arguments](#common-arguments)
-      - [Example Pattern](#example-pattern)
   - [Android Development Workflow](#android-development-workflow)
-    - [Build the Android Runtime](#build-the-android-runtime)
-    - [Integrate the Runtime Using an ARR/AAR](#integrate-the-runtime-using-an-arraar)
+    - [Integrate the Runtime Using an AAR](#integrate-the-runtime-using-an-aar)
     - [Load the Model](#load-the-model)
     - [Run Inference](#run-inference)
     - [Backend Selection](#backend-selection)
@@ -43,8 +59,7 @@ This guide covers exporting and running ExecuTorch models on Galaxy S25 Ultra an
     - [Backend Comparison](#backend-comparison)
   - [Added Backend Extension — XNNPACK and Vulkan](#added-backend-extension--xnnpack-and-vulkan)
     - [Backend Selection](#backend-selection-1)
-    - [Additional Host Parameters](#additional-host-parameters)
-    - [Build the Shared ARM64 Runner](#build-the-shared-arm64-runner)
+    - [Stage the supplied ARM64 runner](#stage-the-supplied-arm64-runner)
     - [XNNPACK Path — CPU](#xnnpack-path--cpu)
     - [Vulkan Path — Adreno GPU](#vulkan-path--adreno-gpu)
     - [Using Attendee-Downloaded Precompiled Models](#using-attendee-downloaded-precompiled-models)
@@ -54,6 +69,27 @@ This guide covers exporting and running ExecuTorch models on Galaxy S25 Ultra an
     - [Backend-Specific Troubleshooting](#backend-specific-troubleshooting)
   - [Additional Resources](#additional-resources)
   - [Device Details](#device-details)
+  - [Appendix A: Optional source builds and model export](#appendix-a-optional-source-builds-and-model-export)
+    - [Setup](#setup)
+      - [Create a Python Environment](#create-a-python-environment)
+      - [Clone ExecuTorch](#clone-executorch)
+      - [Install Dependencies](#install-dependencies)
+      - [Optional Qualcomm SDK and Android NDK Setup](#optional-qualcomm-sdk-and-android-ndk-setup)
+        - [QAIRT SDK](#qairt-sdk)
+        - [Android NDK](#android-ndk)
+        - [QAIRT Runtime Libraries](#qairt-runtime-libraries)
+      - [Build ExecuTorch](#build-executorch)
+        - [Path 1: Use a Coding Agent](#path-1-use-a-coding-agent)
+        - [Path 2: Use the Qualcomm Build Script](#path-2-use-the-qualcomm-build-script)
+    - [Models and Deployment Strategies](#models-and-deployment-strategies)
+      - [Compiling Models](#compiling-models)
+        - [Common Arguments](#common-arguments)
+        - [Example Pattern](#example-pattern)
+      - [Build the Android Runtime](#build-the-android-runtime)
+      - [Additional Host Parameters](#additional-host-parameters)
+      - [Build the Shared ARM64 Runner](#build-the-shared-arm64-runner)
+      - [Export XNNPACK MobileNet V2](#export-xnnpack-mobilenet-v2)
+      - [Export Vulkan MobileNet V2](#export-vulkan-mobilenet-v2)
 
 ## Core Architectural Concepts
 
@@ -148,9 +184,9 @@ ExecuTorch Runtime
 
 The QNN deployment workflow is:
 
-1. Build ahead-of-time AOT components on the host computer.
-2. Compile or obtain a backend-specific `.pte` model artifact.
-3. Build or package the Android runtime.
+1. Install the track’s prepared model bundle.
+2. Confirm its backend and target device.
+3. Obtain the matching Android runtime and QNN libraries from the track team.
 4. Push the compiled model and required libraries to the target device.
 5. Run inference on the device.
 
@@ -172,135 +208,13 @@ If QNN/NPU access is unavailable for a target device, use an XNNPACK or Vulkan b
 
 > **Galaxy XR:** QNN/NPU access is not available to third-party code on retail Galaxy XR units (validated 2026-10-12 on firmware `I610UEU2AZF3`). FastRPC refuses to create a CDSP process from `adb shell` and from installed apps, in both unsigned and signed process-domain modes. Use the XNNPACK or Vulkan path for the XR track.
 
-## Setup
-
-### Create a Python Environment
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-On Windows PowerShell, activate the environment with:
-
-```powershell
-.venv\Scripts\Activate.ps1
-```
-
-### Clone ExecuTorch
-
-```bash
-git clone https://github.com/pytorch/executorch.git
-cd executorch
-
-git submodule sync
-git submodule update --init --recursive
-```
-
-### Install Dependencies
-
-Use a release tag rather than `main`, which can pin nightly packages that have expired. Check out the newest tag (validated with `v1.5.1`) before installing:
-
-```bash
-git checkout v1.5.1
-git submodule sync && git submodule update --init --recursive
-./install_executorch.sh
-```
-
-> The repository has no top-level `requirements.txt`; `install_executorch.sh` installs PyTorch, the pinned dependencies and ExecuTorch itself.
-
-### Optional Qualcomm SDK and Android NDK Setup
-
-The build scripts may download or configure some required artifacts automatically. Alternatively, install them manually and set the required environment variables.
-
-#### QAIRT SDK
-
-```bash
-export QNN_SDK_ROOT=<path_to_qnn_sdk>/2.46.0.260424/
-```
-
-#### Android NDK
-
-```bash
-export ANDROID_NDK_ROOT=<path_to_android_ndk>
-```
-
-> **Important:** Use Android NDK 26 for this workflow.
-
-#### QAIRT Runtime Libraries
-
-Replace `<specific-toolchain>` with the appropriate toolchain directory for the host environment:
-
-```bash
-export LD_LIBRARY_PATH="$QNN_SDK_ROOT/lib/<specific-toolchain>:$LD_LIBRARY_PATH"
-```
-
-### Build ExecuTorch
-
-#### Path 1: Use a Coding Agent
-
-You may use your preferred coding agent to generate the build commands.
-
-Suggested prompt:
-
-> Build ExecuTorch with Qualcomm backend support for Android, using the Qualcomm examples and the configured QAIRT SDK and Android NDK.
-
-Review all generated commands before executing them.
-
-#### Path 2: Use the Qualcomm Build Script
-
-From the ExecuTorch repository root:
-
-```bash
-./backends/qualcomm/scripts/build.sh
-```
-
-## Models and Deployment Strategies
-
-### Compiling Models
-
-The Qualcomm examples provide scripts for exporting and compiling models. Refer to the examples directory:
-
-[ExecuTorch Qualcomm OSS scripts](https://github.com/pytorch/executorch/tree/main/examples/qualcomm/oss_scripts)
-
-#### Common Arguments
-
-| Argument                             | Description                                                          |
-| ------------------------------------ | -------------------------------------------------------------------- |
-| `--build_folder build-android`       | Uses the Android build directory created during the ExecuTorch build |
-| `--soc_model SM8750`                 | Selects the target Snapdragon SoC model; Galaxy S25 uses SM8750      |
-| `--decoder_model <model_to_compile>` | Selects the model to compile                                         |
-| `--compile_only`                     | Generates the `.pte` artifact without running inference              |
-
-#### Example Pattern
-
-```bash
-python <qualcomm_compile_script>.py \
-    --build_folder build-android \
-    --soc_model SM8750 \
-    --decoder_model <model_to_compile> \
-    --compile_only
-```
-
-> The exact script name and model arguments depend on the example being used. Check the current ExecuTorch Qualcomm examples before running the command.
-
 ## Android Development Workflow
 
-### Build the Android Runtime
+After the command-line demo works, integrate the model into your Android app. These Java snippets illustrate integration; they are not a complete sample application. The AAR/`Module` path has not been validated on Galaxy XR. Confirm backend support in the supplied AAR before proceeding.
 
-From the ExecuTorch repository root:
+### Integrate the Runtime Using an AAR
 
-```bash
-./scripts/build_android_library.sh
-```
-
-The resulting Android library can be packaged into an application as an Android Archive (`.aar`).
-
-> **Not yet validated on device.** The app path in this section (AAR, `Module.load`, `module.forward`) has not been run on the Galaxy XR. The Vulkan backend is only included in the AAR if the library build enables it.
-
-### Integrate the Runtime Using an ARR/AAR
-
-Place the generated archive in the application's `libs` directory and add it to the module-level Gradle file:
+Obtain a backend-compatible AAR from the track team. The model ZIP and command-line runner do not include an app runtime. Place the supplied archive in the application's `libs` directory and add it to the module-level Gradle file:
 
 ```kotlin
 dependencies {
@@ -387,86 +301,12 @@ The mobile guide above is retained as the baseline Qualcomm × Meta ExecuTorch H
 | Vulkan  | Adreno GPU               | Vulkan-compatible FP16 `.pte` | `-DEXECUTORCH_BUILD_VULKAN=ON` plus `-DGLSLC_PATH=...` |
 | QNN     | Qualcomm accelerator/NPU | QNN-compatible `.pte`         | Existing mobile-guide QNN workflow                     |
 
-For the XR extension, build one ARM64 Android runner with both XNNPACK and Vulkan enabled. Select the backend through the precompiled model artifact rather than rebuilding the runner for each model.
+Use the supplied ARM64 Android runner with XNNPACK and Vulkan enabled. The model artifact selects the backend. Building a replacement runner is optional; see Appendix A.
 
-### Additional Host Parameters
+### Stage the supplied ARM64 runner
 
-Set these in the Linux host environment. Adapt paths to the workshop machine:
+Use the compatible runner supplied by the track team (the model ZIP does not include it). Set `RUNNER` to its local path, then stage it:
 
-```bash
-export DEVICE=YOUR_ADB_SERIAL
-# Persistent hackathon project directory
-export WORK_DIR="$HOME/executorch-hackathon/work"
-mkdir -p "$WORK_DIR"
-export ANDROID_NDK_ROOT=/path/to/android-ndk
-export GLSLC_PATH=/path/to/vulkansdk/<version>/x86_64/bin/glslc
-export TORCH_HOME="$WORK_DIR/torch-cache"
-export REMOTE_DIR=/data/local/tmp/executorch_validation
-```
-
-`glslc` must come from the **LunarG Vulkan SDK, version 1.4.341.1 or newer**. The `glslc` shipped with the Android NDK does not work: it lacks the `GL_EXT_integer_dot_product` extension, and CMake stops with a fatal error. Install the SDK on the Linux host:
-
-```bash
-wget https://sdk.lunarg.com/sdk/download/1.4.341.1/linux/vulkansdk-linux-x86_64-1.4.341.1.tar.xz
-mkdir -p "$HOME/vulkansdk"
-tar -C "$HOME/vulkansdk" -xJf vulkansdk-linux-x86_64-1.4.341.1.tar.xz
-export GLSLC_PATH="$HOME/vulkansdk/1.4.341.1/x86_64/bin/glslc"
-```
-
-For wireless debugging, `DEVICE` is the `ip:port` shown by `adb devices`. The port changes when the headset reboots or wireless debugging is toggled.
-
-Validate the target and tools:
-
-```bash
-adb -s "$DEVICE" get-state
-adb -s "$DEVICE" shell getprop ro.product.cpu.abi
-adb -s "$DEVICE" shell getprop ro.build.version.sdk
-adb -s "$DEVICE" shell getprop ro.build.fingerprint
-adb -s "$DEVICE" shell getprop ro.hardware.vulkan
-git describe --tags
-python -c 'import torch, torchvision, executorch; print(torch.__version__, torchvision.__version__)'
-test -f "$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake" && echo ndk-ok
-"$GLSLC_PATH" --version
-```
-
-Expected on Galaxy XR: `device`, `arm64-v8a`, `34`, a build fingerprint, `adreno`, the ExecuTorch tag, two version numbers, `ndk-ok`, and a `shaderc` version line.
-
-`GLSLC_PATH` must point to an executable `glslc` shader compiler. Vulkan builds require this compiler to generate the shader assets used by the Vulkan backend.
-
-### Build the Shared ARM64 Runner
-
-Run from the ExecuTorch repository root. These are the additional CMake flags for XNNPACK and Vulkan:
-
-```bash
-cmake -S . -B "$WORK_DIR/build" \
-  -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake" \
-  -DANDROID_ABI=arm64-v8a \
-  -DANDROID_PLATFORM=android-30 \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DEXECUTORCH_BUILD_PRESET_FILE="$PWD/tools/cmake/preset/android.cmake" \
-  -DEXECUTORCH_BUILD_EXECUTOR_RUNNER=ON \
-  -DEXECUTORCH_BUILD_EXTENSION_EVALUE_UTIL=ON \
-  -DEXECUTORCH_BUILD_XNNPACK=ON \
-  -DEXECUTORCH_BUILD_VULKAN=ON \
-  -DEXECUTORCH_BUILD_KERNELS_OPTIMIZED=ON \
-  -DEXECUTORCH_BUILD_KERNELS_QUANTIZED=ON \
-  -DGLSLC_PATH="$GLSLC_PATH"
-
-cmake --build "$WORK_DIR/build" --target executor_runner -j"$(nproc)"
-test -x "$WORK_DIR/build/executor_runner"
-```
-
-`EXECUTORCH_BUILD_EXTENSION_EVALUE_UTIL=ON` is required: the `executor_runner` target depends on it, the Android preset does not enable it, and configuration fails without it. The build takes several minutes; compiling the Vulkan shaders is the slowest part.
-
-The Release binary keeps debug symbols (about 200 MB). Strip it before pushing; this does not change behavior:
-
-```bash
-"$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" \
-  -o "$WORK_DIR/executor_runner" "$WORK_DIR/build/executor_runner"
-export RUNNER="$WORK_DIR/executor_runner"
-```
-
-Stage the shared runner:
 
 ```bash
 adb -s "$DEVICE" shell "mkdir -p $REMOTE_DIR"
@@ -476,14 +316,9 @@ adb -s "$DEVICE" shell "chmod 755 $REMOTE_DIR/executor_runner"
 
 ### XNNPACK Path — CPU
 
-Generate or use the precompiled XNNPACK artifact. The example below creates an FP32 MobileNet V2 artifact:
+Use the installed `mv2_xnnpack_fp32.pte` from the track bundle:
 
 ```bash
-python -m examples.xnnpack.aot_compiler \
-  --model_name mv2 \
-  --output_dir "$WORK_DIR"
-
-sha256sum "$WORK_DIR/mv2_xnnpack_fp32.pte"
 adb -s "$DEVICE" push "$WORK_DIR/mv2_xnnpack_fp32.pte" "$REMOTE_DIR/"
 ```
 
@@ -508,15 +343,9 @@ Measured on Galaxy XR: model load about 20 ms, 5 executions in about 35 ms, stea
 
 ### Vulkan Path — Adreno GPU
 
-Generate or use the precompiled Vulkan artifact. The example below creates an FP16 MobileNet V2 artifact:
+Use the installed `mv2_vulkan.pte` from the track bundle:
 
 ```bash
-python -m examples.vulkan.export \
-  --model_name mv2 \
-  --force_fp16 \
-  --output_dir "$WORK_DIR"
-
-sha256sum "$WORK_DIR/mv2_vulkan.pte"
 adb -s "$DEVICE" push "$WORK_DIR/mv2_vulkan.pte" "$REMOTE_DIR/"
 ```
 
@@ -663,3 +492,237 @@ Measured on Galaxy XR with three PASCAL VOC images: XNNPACK FP32 matched PyTorch
 | **Supported backends** | QNN, XNNPACK, Vulkan                       | XNNPACK, Vulkan                           |
 
 > Verify these values against the actual target device before compiling a model, for example with `adb shell getprop ro.soc.model`.
+
+
+## Appendix A: Optional source builds and model export
+
+Skip this appendix for the installable attendee models. Use it only to customize a runtime or export a different model. Source builds do not unlock QNN on retail Galaxy XR.
+
+### Setup
+
+#### Create a Python Environment
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+On Windows PowerShell, activate the environment with:
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+#### Clone ExecuTorch
+
+```bash
+git clone https://github.com/pytorch/executorch.git
+cd executorch
+
+git submodule sync
+git submodule update --init --recursive
+```
+
+#### Install Dependencies
+
+Use a release tag rather than `main`, which can pin nightly packages that have expired. Check out the newest tag (validated with `v1.5.1`) before installing:
+
+```bash
+git checkout v1.5.1
+git submodule sync && git submodule update --init --recursive
+./install_executorch.sh
+```
+
+> The repository has no top-level `requirements.txt`; `install_executorch.sh` installs PyTorch, the pinned dependencies and ExecuTorch itself.
+
+#### Optional Qualcomm SDK and Android NDK Setup
+
+The build scripts may download or configure some required artifacts automatically. Alternatively, install them manually and set the required environment variables.
+
+##### QAIRT SDK
+
+```bash
+export QNN_SDK_ROOT=<path_to_qnn_sdk>/2.46.0.260424/
+```
+
+##### Android NDK
+
+```bash
+export ANDROID_NDK_ROOT=<path_to_android_ndk>
+```
+
+> **Important:** Use Android NDK 26 for this workflow.
+
+##### QAIRT Runtime Libraries
+
+Replace `<specific-toolchain>` with the appropriate toolchain directory for the host environment:
+
+```bash
+export LD_LIBRARY_PATH="$QNN_SDK_ROOT/lib/<specific-toolchain>:$LD_LIBRARY_PATH"
+```
+
+#### Build ExecuTorch
+
+##### Path 1: Use a Coding Agent
+
+You may use your preferred coding agent to generate the build commands.
+
+Suggested prompt:
+
+> Build ExecuTorch with Qualcomm backend support for Android, using the Qualcomm examples and the configured QAIRT SDK and Android NDK.
+
+Review all generated commands before executing them.
+
+##### Path 2: Use the Qualcomm Build Script
+
+From the ExecuTorch repository root:
+
+```bash
+./backends/qualcomm/scripts/build.sh
+```
+
+### Models and Deployment Strategies
+
+#### Compiling Models
+
+The Qualcomm examples provide scripts for exporting and compiling models. Refer to the examples directory:
+
+[ExecuTorch Qualcomm OSS scripts](https://github.com/pytorch/executorch/tree/main/examples/qualcomm/oss_scripts)
+
+##### Common Arguments
+
+| Argument                             | Description                                                          |
+| ------------------------------------ | -------------------------------------------------------------------- |
+| `--build_folder build-android`       | Uses the Android build directory created during the ExecuTorch build |
+| `--soc_model SM8750`                 | Selects the target Snapdragon SoC model; Galaxy S25 uses SM8750      |
+| `--decoder_model <model_to_compile>` | Selects the model to compile                                         |
+| `--compile_only`                     | Generates the `.pte` artifact without running inference              |
+
+##### Example Pattern
+
+```bash
+python <qualcomm_compile_script>.py \
+    --build_folder build-android \
+    --soc_model SM8750 \
+    --decoder_model <model_to_compile> \
+    --compile_only
+```
+
+> The exact script name and model arguments depend on the example being used. Check the current ExecuTorch Qualcomm examples before running the command.
+
+#### Build the Android Runtime
+
+From the ExecuTorch repository root:
+
+```bash
+./scripts/build_android_library.sh
+```
+
+The resulting Android library can be packaged into an application as an Android Archive (`.aar`).
+
+> **Not yet validated on device.** The app path in this section (AAR, `Module.load`, `module.forward`) has not been run on the Galaxy XR. The Vulkan backend is only included in the AAR if the library build enables it.
+
+#### Additional Host Parameters
+
+Set these in the Linux host environment. Adapt paths to the workshop machine:
+
+```bash
+export DEVICE=YOUR_ADB_SERIAL
+# Persistent hackathon project directory
+export WORK_DIR="$HOME/executorch-hackathon/work"
+mkdir -p "$WORK_DIR"
+export ANDROID_NDK_ROOT=/path/to/android-ndk
+export GLSLC_PATH=/path/to/vulkansdk/<version>/x86_64/bin/glslc
+export TORCH_HOME="$WORK_DIR/torch-cache"
+export REMOTE_DIR=/data/local/tmp/executorch_validation
+```
+
+`glslc` must come from the **LunarG Vulkan SDK, version 1.4.341.1 or newer**. The `glslc` shipped with the Android NDK does not work: it lacks the `GL_EXT_integer_dot_product` extension, and CMake stops with a fatal error. Install the SDK on the Linux host:
+
+```bash
+wget https://sdk.lunarg.com/sdk/download/1.4.341.1/linux/vulkansdk-linux-x86_64-1.4.341.1.tar.xz
+mkdir -p "$HOME/vulkansdk"
+tar -C "$HOME/vulkansdk" -xJf vulkansdk-linux-x86_64-1.4.341.1.tar.xz
+export GLSLC_PATH="$HOME/vulkansdk/1.4.341.1/x86_64/bin/glslc"
+```
+
+For wireless debugging, `DEVICE` is the `ip:port` shown by `adb devices`. The port changes when the headset reboots or wireless debugging is toggled.
+
+Validate the target and tools:
+
+```bash
+adb -s "$DEVICE" get-state
+adb -s "$DEVICE" shell getprop ro.product.cpu.abi
+adb -s "$DEVICE" shell getprop ro.build.version.sdk
+adb -s "$DEVICE" shell getprop ro.build.fingerprint
+adb -s "$DEVICE" shell getprop ro.hardware.vulkan
+git describe --tags
+python -c 'import torch, torchvision, executorch; print(torch.__version__, torchvision.__version__)'
+test -f "$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake" && echo ndk-ok
+"$GLSLC_PATH" --version
+```
+
+Expected on Galaxy XR: `device`, `arm64-v8a`, `34`, a build fingerprint, `adreno`, the ExecuTorch tag, two version numbers, `ndk-ok`, and a `shaderc` version line.
+
+`GLSLC_PATH` must point to an executable `glslc` shader compiler. Vulkan builds require this compiler to generate the shader assets used by the Vulkan backend.
+
+#### Build the Shared ARM64 Runner
+
+Run from the ExecuTorch repository root. These are the additional CMake flags for XNNPACK and Vulkan:
+
+```bash
+cmake -S . -B "$WORK_DIR/build" \
+  -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake" \
+  -DANDROID_ABI=arm64-v8a \
+  -DANDROID_PLATFORM=android-30 \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DEXECUTORCH_BUILD_PRESET_FILE="$PWD/tools/cmake/preset/android.cmake" \
+  -DEXECUTORCH_BUILD_EXECUTOR_RUNNER=ON \
+  -DEXECUTORCH_BUILD_EXTENSION_EVALUE_UTIL=ON \
+  -DEXECUTORCH_BUILD_XNNPACK=ON \
+  -DEXECUTORCH_BUILD_VULKAN=ON \
+  -DEXECUTORCH_BUILD_KERNELS_OPTIMIZED=ON \
+  -DEXECUTORCH_BUILD_KERNELS_QUANTIZED=ON \
+  -DGLSLC_PATH="$GLSLC_PATH"
+
+cmake --build "$WORK_DIR/build" --target executor_runner -j"$(nproc)"
+test -x "$WORK_DIR/build/executor_runner"
+```
+
+`EXECUTORCH_BUILD_EXTENSION_EVALUE_UTIL=ON` is required: the `executor_runner` target depends on it, the Android preset does not enable it, and configuration fails without it. The build takes several minutes; compiling the Vulkan shaders is the slowest part.
+
+The Release binary keeps debug symbols (about 200 MB). Strip it before pushing; this does not change behavior:
+
+```bash
+"$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" \
+  -o "$WORK_DIR/executor_runner" "$WORK_DIR/build/executor_runner"
+export RUNNER="$WORK_DIR/executor_runner"
+```
+
+
+#### Export XNNPACK MobileNet V2
+
+Generate or use the precompiled XNNPACK artifact. The example below creates an FP32 MobileNet V2 artifact:
+
+```bash
+python -m examples.xnnpack.aot_compiler \
+  --model_name mv2 \
+  --output_dir "$WORK_DIR"
+
+sha256sum "$WORK_DIR/mv2_xnnpack_fp32.pte"
+adb -s "$DEVICE" push "$WORK_DIR/mv2_xnnpack_fp32.pte" "$REMOTE_DIR/"
+```
+
+#### Export Vulkan MobileNet V2
+
+Generate or use the precompiled Vulkan artifact. The example below creates an FP16 MobileNet V2 artifact:
+
+```bash
+python -m examples.vulkan.export \
+  --model_name mv2 \
+  --force_fp16 \
+  --output_dir "$WORK_DIR"
+
+sha256sum "$WORK_DIR/mv2_vulkan.pte"
+adb -s "$DEVICE" push "$WORK_DIR/mv2_vulkan.pte" "$REMOTE_DIR/"
+```

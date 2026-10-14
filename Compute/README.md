@@ -6,30 +6,44 @@ The commands target [ExecuTorch v1.5.1](https://github.com/pytorch/executorch/re
 
 [All tracks](../README.md) · [Accompanying artifacts](artifacts/README.md)
 
+## Attendee journey
+
+> [!IMPORTANT]
+> **ExecuTorch models will be preinstalled on Compute devices. Participants do not need to download and compile ExecuTorch from scratch, or export the supplied models.** Start with the installed model and compatible runtime.
+
+1. **Find your installed bundle.** Obtain its location from the track team and check the files listed under [Windows ARM64 Deployment](#windows-arm64-deployment).
+2. **Run locally.** Follow [Load Model](#load-model), then [Run Inference](#run-inference) with the supplied real inputs. A successful default-input run is only a smoke test.
+3. **Make the PC demo visible.** Connect your app's image input to the bundle's preprocessing, inference, and segmentation-output rendering. Show the original image beside the predicted mask and report end-to-end latency.
+4. **Verify and rehearse.** Follow [Testing](#testing), compare the supplied reference outputs, then repeat the demo with another image and after restarting the app. Keep the model loaded between requests.
+
+Your first milestone is a repeatable local image-to-segmentation demo on the X Elite. Custom export and runtime compilation are optional advanced work in [Appendix A](#appendix-a-optional-source-build-and-model-export).
+
 ## Contents
 
 - [Compute Guide: Snapdragon X Elite PC](#compute-guide-snapdragon-x-elite-pc)
+  - [Attendee journey](#attendee-journey)
   - [Contents](#contents)
   - [Core Architectural Concepts](#core-architectural-concepts)
     - [Why ExecuTorch?](#why-executorch)
     - [PyTorch to ExecuTorch Workflow](#pytorch-to-executorch-workflow)
     - [Backend Stack Hierarchy](#backend-stack-hierarchy)
   - [ExecuTorch Runtime Overview](#executorch-runtime-overview)
-  - [ExecuTorch x Qualcomm AI Runtime (QAIRT)](#executorch-x-qualcomm-ai-runtime-qairt)
-    - [Workflow](#workflow)
-    - [Setup](#setup)
-    - [Build ExecuTorch](#build-executorch)
-  - [Models and Deployment Strategies](#models-and-deployment-strategies)
-    - [Compiling Models](#compiling-models)
-    - [Hardware Optimization](#hardware-optimization)
   - [Windows ARM64 Deployment](#windows-arm64-deployment)
-    - [Stage the ARM64 Runtime](#stage-the-arm64-runtime)
-    - [Package the QNN Libraries](#package-the-qnn-libraries)
     - [Load Model](#load-model)
     - [Run Inference](#run-inference)
     - [Testing](#testing)
   - [Additional Resources](#additional-resources)
   - [Device Details](#device-details)
+  - [Appendix A: Optional source build and model export](#appendix-a-optional-source-build-and-model-export)
+    - [ExecuTorch x Qualcomm AI Runtime (QAIRT)](#executorch-x-qualcomm-ai-runtime-qairt)
+      - [Workflow](#workflow)
+      - [Setup](#setup)
+      - [Build ExecuTorch](#build-executorch)
+    - [Models and Deployment Strategies](#models-and-deployment-strategies)
+      - [Compiling Models](#compiling-models)
+      - [Hardware Optimization](#hardware-optimization)
+      - [Stage the ARM64 Runtime](#stage-the-arm64-runtime)
+      - [Package the QNN Libraries](#package-the-qnn-libraries)
 
 ## Core Architectural Concepts
 
@@ -66,101 +80,9 @@ The recommended runtime architecture is:
 Windows ARM64 Application → ExecuTorch QNN Backend → QAIRT / QNN HTP → X Elite Hexagon NPU
 ```
 
-## ExecuTorch x Qualcomm AI Runtime (QAIRT)
-
-### Workflow
-
-Export and compile the model with x64 Python → build the Windows ARM64 runtime → run the QNN HTP delegate on the X Elite NPU. The x64 runner is a host emulator; its timings do not measure the laptop NPU. See the [Windows QNN workflow](https://docs.pytorch.org/executorch/1.5/backends-qualcomm.html).
-
-### Setup
-
-1. Use Windows 11 on the X Elite PC and an OEM-supported Qualcomm Hexagon NPU driver. Check the device status and driver version in Device Manager; install applicable OEM/Windows updates before testing.
-2. Install Git, x64 Python 3.12, and Visual Studio 2022 with C++ desktop tools, ARM64 and x64 MSVC tools, Windows SDK, CMake, and Clang/LLVM. Use a Visual Studio Developer PowerShell. On the X Elite itself, use AMD64 Python under emulation for ahead-of-time (AOT) dependencies. If using Visual Studio 2026, the QNN build script requires CMake 4 or later on the developer shell's `PATH`. See [Windows build prerequisites](https://docs.pytorch.org/executorch/1.5/using-executorch-building-from-source.html).
-3. Enable Windows Developer Mode for Git symlinks, or clone from a shell with permission to create them. Use the same ExecuTorch checkout for export and runtime, and record its commit.
-4. Install QAIRT/QNN manually on Windows. Version **2.37.0.250724** matches the release's [SDK version configuration](https://github.com/pytorch/executorch/blob/v1.5.1/backends/qualcomm/scripts/qnn_config.sh); use matching compiler/runtime libraries. Recheck the configuration when changing ExecuTorch versions. Use the [QNN SDK download for this version](https://softwarecenter.qualcomm.com/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/2.37.0.250724/v2.37.0.250724.zip), or select the matching version in [Qualcomm Software Center](https://softwarecenter.qualcomm.com/catalog/item/Qualcomm_AI_Runtime_Community).
-
-```powershell
-git clone -c core.symlinks=true --branch v1.5.1 --recurse-submodules https://github.com/pytorch/executorch.git
-cd executorch
-$env:EXECUTORCH_ROOT = (Get-Location).Path
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -c "import sysconfig; assert sysconfig.get_platform() == 'win-amd64'"
-git rev-parse HEAD
-$env:QNN_SDK_ROOT = "C:\Qualcomm\AIStack\QAIRT\2.37.0.250724"
-& "$env:QNN_SDK_ROOT\bin\envsetup.ps1"
-$env:PYTHONPATH = "$env:EXECUTORCH_ROOT\..;$env:PYTHONPATH"
-python install_executorch.py
-```
-
-Set `QNN_SDK_ROOT` to the extracted directory containing `QNN_README.txt`. Stop on any installation error. The [upstream Python installer](https://github.com/pytorch/executorch/blob/v1.5.1/install_executorch.py) installs the checkout's dependencies and example requirements.
-
-For a fresh environment, let the installer select the release's dependency versions. `--use-pt-pinned-commit` assumes PyTorch has already been provisioned, as in upstream CI; it does not fetch a pinned PyTorch commit. See the [dependency installer](https://github.com/pytorch/executorch/blob/v1.5.1/install_requirements.py).
-
-### Build ExecuTorch
-
-```powershell
-.\backends\qualcomm\scripts\build.ps1 -Release
-```
-
-Build both architectures: x64 supplies the AOT Python bindings; ARM64 supplies the on-device runner. The [Windows build script](https://github.com/pytorch/executorch/blob/v1.5.1/backends/qualcomm/scripts/build.ps1) also enables developer tools and event tracing. An x64 Windows workstation can cross-compile, then transfer the ARM64 bundle to the laptop.
-
-## Models and Deployment Strategies
-
-### Compiling Models
-
-First compile the upstream DeepLab example with representative calibration data. Run from `EXECUTORCH_ROOT` in the x64 Python environment:
-
-```powershell
-python -m examples.qualcomm.scripts.deeplab_v3 --build_folder build-x86_64-windows --soc_model SC8380XP --backend htp --compile_only --download
-```
-
-Output: `deeplab_v3\dlv3_qnn.pte`. The [DeepLab export example](https://github.com/pytorch/executorch/blob/v1.5.1/examples/qualcomm/scripts/deeplab_v3.py) uses INT8 activations/weights for HTP and downloads calibration data/model weights. Avoid its random-input CI option for accuracy evaluation. `SC8380XP` selects X Elite's Hexagon v73 (SoC ID 60). See the [chipset mapping](https://github.com/pytorch/executorch/blob/v1.5.1/backends/qualcomm/serialization/qc_schema.py).
-
-For your model, follow the [QNN custom-model example](https://github.com/pytorch/executorch/blob/v1.5.1/examples/qualcomm/scripts/export_example.py): export → QNN post-training quantization (PTQ) calibration on representative inputs → convert → lower with `to_edge_transform_and_lower_to_qnn()` → call `to_executorch()` and save `.pte`. Start with supported fixed input shapes and INT8; try higher precision only where measured accuracy requires it. Pass `SC8380XP` to the quantizer and compiler. A generic CPU `.pte` will not start using the NPU simply because the PC has one.
-
-### Hardware Optimization
-
-Inspect delegation after lowering and before `to_executorch()`. In your exporter, `edge_manager` below is the returned `EdgeProgramManager`:
-
-```python
-from executorch.devtools.backend_debug import get_delegation_info
-
-info = get_delegation_info(edge_manager.exported_program().graph_module)
-print(info.get_summary())
-print(info.get_operator_delegation_dataframe())
-```
-
-Prioritize costly convolutions, matrix multiplies, and attention in QNN partitions. Use the [operator support matrix](https://github.com/pytorch/executorch/tree/v1.5.1/backends/qualcomm/builders#operator-support-status) to replace or restructure unsupported operations; remove unnecessary skip-delegation settings. Reduce CPU↔NPU boundaries, layout conversions, and repeated copies. A delegated-op count alone does not measure NPU busy time. See [delegation inspection](https://docs.pytorch.org/executorch/1.5/llm/export-custom-llm.html#visualizing-the-delegation).
-
-Keep the model loaded and reuse input/output buffers. Preprocess the next input while the previous inference runs when the application permits it. Benchmark batching only if its latency and memory cost fit the workload. For LLMs, use the [model-specific QNN export and runner](https://github.com/pytorch/executorch/tree/v1.5.1/examples/qualcomm/oss_scripts), with `SC8380XP` targeting; measure prefill and decode separately. The single-forward DeepLab runner is not an autoregressive chat loop.
-
 ## Windows ARM64 Deployment
 
-### Stage the ARM64 Runtime
-
-In PowerShell on the build machine, run from `EXECUTORCH_ROOT` to create a self-contained run directory:
-
-```powershell
-$bundle = "$env:EXECUTORCH_ROOT\xelite-run"
-New-Item -ItemType Directory -Force $bundle | Out-Null
-$armBuild = "$env:EXECUTORCH_ROOT\build-arm64-windows"
-Copy-Item "$armBuild\examples\qualcomm\executor_runner\Release\qnn_executor_runner.exe" $bundle
-Copy-Item "$armBuild\backends\qualcomm\Release\qnn_executorch_backend.dll" $bundle
-Copy-Item ".\deeplab_v3\dlv3_qnn.pte" $bundle
-```
-
-### Package the QNN Libraries
-
-```powershell
-$qnnArm = "$env:QNN_SDK_ROOT\lib\aarch64-windows-msvc"
-Copy-Item "$qnnArm\QnnHtp.dll" $bundle
-Copy-Item "$qnnArm\QnnSystem.dll" $bundle
-Copy-Item "$qnnArm\QnnHtpV73Stub.dll" $bundle
-Copy-Item "$env:QNN_SDK_ROOT\lib\hexagon-v73\unsigned\*" $bundle
-```
-
-Keep the v73 skeleton and its accompanying catalog files together. These Hexagon `.so` files are DSP binaries, even on Windows. All Windows DLLs must come from the ARM64 SDK directory and the same SDK version used for compilation. Copy the entire `xelite-run` directory to the X Elite PC if built elsewhere. See [Windows runtime libraries](https://docs.pytorch.org/executorch/1.5/backends-qualcomm.html#run-model-inference-on-windows-on-snapdragon-wos-with-qualcomm-socs) and [Qualcomm's Windows packaging example](https://docs.qualcomm.com/doc/80-94755-1/80-94755-1_REV_AA_QAI_AppBuilder_-_WoS.pdf).
+Open PowerShell in the preinstalled model bundle directory supplied for your laptop. The commands below use the DeepLab bundle names; check the installed model's manifest before substituting another model. Confirm `qnn_executor_runner.exe`, `dlv3_qnn.pte`, the matching ARM64 QNN DLLs, and v73 DSP files are present. Use the bundle's prepared `input_list.txt` and reference outputs for real-input validation. If files are missing, ask the track team to repair the installation; a source build is not an attendee prerequisite.
 
 ### Load Model
 
@@ -191,7 +113,7 @@ Confirm NPU execution with a separate diagnostic run using the same inputs and o
 .\qnn_executor_runner.exe --model_path .\dlv3_qnn.pte --input_list_path .\input_list.txt --output_folder_path .\outputs --warm_up 0 --iteration 1 --htp_performance_mode 1 --profile_level 2 --etdump_path .\xelite.etdp
 ```
 
-Inspect QNN delegate and CPU events with ExecuTorch Inspector. The Windows build above enables tracing; retain an ETRecord from export if source-level attribution is needed. Detailed profiling adds overhead, so keep these timings separate from the benchmark. See [ExecuTorch profiling](https://docs.pytorch.org/executorch/1.5/runtime-profiling.html).
+Inspect QNN delegate and CPU events with ExecuTorch Inspector. The optional Windows source build enables tracing; check whether your supplied runner includes it and obtain a profiling-enabled runner from the track team if needed; retain an ETRecord from export if source-level attribution is needed. Detailed profiling adds overhead, so keep these timings separate from the benchmark. See [ExecuTorch profiling](https://docs.pytorch.org/executorch/1.5/runtime-profiling.html).
 
 Correlate a sustained run with **Task Manager → Performance → NPU**; use WPR/WPA or Snapdragon Profiler when aggregate utilization is ambiguous. Task Manager is corroboration, not proof that every operator was delegated. See [Windows NPU measurement tools](https://learn.microsoft.com/en-us/windows/ai/npu-devices/#how-to-measure-performance-of-ai-models-running-locally-on-the-device-npu).
 
@@ -224,3 +146,102 @@ If loading fails, check ARM64 versus x64 binaries, missing DLLs/v73 skeleton/cat
 | ExecuTorch target          | `QcomChipset.SC8380XP`      |
 | Hexagon / HTP architecture | v73                         |
 | SoC ID                     | 60                          |
+
+
+## Appendix A: Optional source build and model export
+
+Skip this appendix for the preinstalled attendee demo. Use it only to customize the runtime or export your own model. Model export creates a `.pte`; compiling ExecuTorch builds the runtime that runs it.
+
+### ExecuTorch x Qualcomm AI Runtime (QAIRT)
+
+#### Workflow
+
+Export and compile the model with x64 Python → build the Windows ARM64 runtime → run the QNN HTP delegate on the X Elite NPU. The x64 runner is a host emulator; its timings do not measure the laptop NPU. See the [Windows QNN workflow](https://docs.pytorch.org/executorch/1.5/backends-qualcomm.html).
+
+#### Setup
+
+1. Use Windows 11 on the X Elite PC and an OEM-supported Qualcomm Hexagon NPU driver. Check the device status and driver version in Device Manager; install applicable OEM/Windows updates before testing.
+2. Install Git, x64 Python 3.12, and Visual Studio 2022 with C++ desktop tools, ARM64 and x64 MSVC tools, Windows SDK, CMake, and Clang/LLVM. Use a Visual Studio Developer PowerShell. On the X Elite itself, use AMD64 Python under emulation for ahead-of-time (AOT) dependencies. If using Visual Studio 2026, the QNN build script requires CMake 4 or later on the developer shell's `PATH`. See [Windows build prerequisites](https://docs.pytorch.org/executorch/1.5/using-executorch-building-from-source.html).
+3. Enable Windows Developer Mode for Git symlinks, or clone from a shell with permission to create them. Use the same ExecuTorch checkout for export and runtime, and record its commit.
+4. Install QAIRT/QNN manually on Windows. Version **2.37.0.250724** matches the release's [SDK version configuration](https://github.com/pytorch/executorch/blob/v1.5.1/backends/qualcomm/scripts/qnn_config.sh); use matching compiler/runtime libraries. Recheck the configuration when changing ExecuTorch versions. Use the [QNN SDK download for this version](https://softwarecenter.qualcomm.com/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/2.37.0.250724/v2.37.0.250724.zip), or select the matching version in [Qualcomm Software Center](https://softwarecenter.qualcomm.com/catalog/item/Qualcomm_AI_Runtime_Community).
+
+```powershell
+git clone -c core.symlinks=true --branch v1.5.1 --recurse-submodules https://github.com/pytorch/executorch.git
+cd executorch
+$env:EXECUTORCH_ROOT = (Get-Location).Path
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -c "import sysconfig; assert sysconfig.get_platform() == 'win-amd64'"
+git rev-parse HEAD
+$env:QNN_SDK_ROOT = "C:\Qualcomm\AIStack\QAIRT\2.37.0.250724"
+& "$env:QNN_SDK_ROOT\bin\envsetup.ps1"
+$env:PYTHONPATH = "$env:EXECUTORCH_ROOT\..;$env:PYTHONPATH"
+python install_executorch.py
+```
+
+Set `QNN_SDK_ROOT` to the extracted directory containing `QNN_README.txt`. Stop on any installation error. The [upstream Python installer](https://github.com/pytorch/executorch/blob/v1.5.1/install_executorch.py) installs the checkout's dependencies and example requirements.
+
+For a fresh environment, let the installer select the release's dependency versions. `--use-pt-pinned-commit` assumes PyTorch has already been provisioned, as in upstream CI; it does not fetch a pinned PyTorch commit. See the [dependency installer](https://github.com/pytorch/executorch/blob/v1.5.1/install_requirements.py).
+
+#### Build ExecuTorch
+
+```powershell
+.\backends\qualcomm\scripts\build.ps1 -Release
+```
+
+Build both architectures: x64 supplies the AOT Python bindings; ARM64 supplies the on-device runner. The [Windows build script](https://github.com/pytorch/executorch/blob/v1.5.1/backends/qualcomm/scripts/build.ps1) also enables developer tools and event tracing. An x64 Windows workstation can cross-compile, then transfer the ARM64 bundle to the laptop.
+
+### Models and Deployment Strategies
+
+#### Compiling Models
+
+First compile the upstream DeepLab example with representative calibration data. Run from `EXECUTORCH_ROOT` in the x64 Python environment:
+
+```powershell
+python -m examples.qualcomm.scripts.deeplab_v3 --build_folder build-x86_64-windows --soc_model SC8380XP --backend htp --compile_only --download
+```
+
+Output: `deeplab_v3\dlv3_qnn.pte`. The [DeepLab export example](https://github.com/pytorch/executorch/blob/v1.5.1/examples/qualcomm/scripts/deeplab_v3.py) uses INT8 activations/weights for HTP and downloads calibration data/model weights. Avoid its random-input CI option for accuracy evaluation. `SC8380XP` selects X Elite's Hexagon v73 (SoC ID 60). See the [chipset mapping](https://github.com/pytorch/executorch/blob/v1.5.1/backends/qualcomm/serialization/qc_schema.py).
+
+For your model, follow the [QNN custom-model example](https://github.com/pytorch/executorch/blob/v1.5.1/examples/qualcomm/scripts/export_example.py): export → QNN post-training quantization (PTQ) calibration on representative inputs → convert → lower with `to_edge_transform_and_lower_to_qnn()` → call `to_executorch()` and save `.pte`. Start with supported fixed input shapes and INT8; try higher precision only where measured accuracy requires it. Pass `SC8380XP` to the quantizer and compiler. A generic CPU `.pte` will not start using the NPU simply because the PC has one.
+
+#### Hardware Optimization
+
+Inspect delegation after lowering and before `to_executorch()`. In your exporter, `edge_manager` below is the returned `EdgeProgramManager`:
+
+```python
+from executorch.devtools.backend_debug import get_delegation_info
+
+info = get_delegation_info(edge_manager.exported_program().graph_module)
+print(info.get_summary())
+print(info.get_operator_delegation_dataframe())
+```
+
+Prioritize costly convolutions, matrix multiplies, and attention in QNN partitions. Use the [operator support matrix](https://github.com/pytorch/executorch/tree/v1.5.1/backends/qualcomm/builders#operator-support-status) to replace or restructure unsupported operations; remove unnecessary skip-delegation settings. Reduce CPU↔NPU boundaries, layout conversions, and repeated copies. A delegated-op count alone does not measure NPU busy time. See [delegation inspection](https://docs.pytorch.org/executorch/1.5/llm/export-custom-llm.html#visualizing-the-delegation).
+
+Keep the model loaded and reuse input/output buffers. Preprocess the next input while the previous inference runs when the application permits it. Benchmark batching only if its latency and memory cost fit the workload. For LLMs, use the [model-specific QNN export and runner](https://github.com/pytorch/executorch/tree/v1.5.1/examples/qualcomm/oss_scripts), with `SC8380XP` targeting; measure prefill and decode separately. The single-forward DeepLab runner is not an autoregressive chat loop.
+
+#### Stage the ARM64 Runtime
+
+In PowerShell on the build machine, run from `EXECUTORCH_ROOT` to create a self-contained run directory:
+
+```powershell
+$bundle = "$env:EXECUTORCH_ROOT\xelite-run"
+New-Item -ItemType Directory -Force $bundle | Out-Null
+$armBuild = "$env:EXECUTORCH_ROOT\build-arm64-windows"
+Copy-Item "$armBuild\examples\qualcomm\executor_runner\Release\qnn_executor_runner.exe" $bundle
+Copy-Item "$armBuild\backends\qualcomm\Release\qnn_executorch_backend.dll" $bundle
+Copy-Item ".\deeplab_v3\dlv3_qnn.pte" $bundle
+```
+
+#### Package the QNN Libraries
+
+```powershell
+$qnnArm = "$env:QNN_SDK_ROOT\lib\aarch64-windows-msvc"
+Copy-Item "$qnnArm\QnnHtp.dll" $bundle
+Copy-Item "$qnnArm\QnnSystem.dll" $bundle
+Copy-Item "$qnnArm\QnnHtpV73Stub.dll" $bundle
+Copy-Item "$env:QNN_SDK_ROOT\lib\hexagon-v73\unsigned\*" $bundle
+```
+
+Keep the v73 skeleton and its accompanying catalog files together. These Hexagon `.so` files are DSP binaries, even on Windows. All Windows DLLs must come from the ARM64 SDK directory and the same SDK version used for compilation. Copy the entire `xelite-run` directory to the X Elite PC if built elsewhere. See [Windows runtime libraries](https://docs.pytorch.org/executorch/1.5/backends-qualcomm.html#run-model-inference-on-windows-on-snapdragon-wos-with-qualcomm-socs) and [Qualcomm's Windows packaging example](https://docs.qualcomm.com/doc/80-94755-1/80-94755-1_REV_AA_QAI_AppBuilder_-_WoS.pdf).
