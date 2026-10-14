@@ -1,6 +1,6 @@
 # Mobile + XR Guide: Samsung Galaxy S25 Ultra and Galaxy XR
 
-Build a mobile or immersive demo with installable ExecuTorch models: Galaxy S25 Ultra supports the mobile QNN path; retail Galaxy XR uses the validated XNNPACK CPU or Vulkan GPU path below.
+Build a mobile or immersive demo with installable ExecuTorch models: Galaxy S25 Ultra (SM8750, Hexagon V79) and retail Galaxy XR (SXR2230P, Hexagon V69) both run the validated QNN NPU path below, with an XNNPACK CPU fallback.
 
 [All tracks](../README.md) · [Accompanying artifacts](artifacts/README.md)
 
@@ -9,30 +9,35 @@ Build a mobile or immersive demo with installable ExecuTorch models: Galaxy S25 
 > [!IMPORTANT]
 > **ExecuTorch models will be available to install for Mobile and XR. Participants do not need to download and compile ExecuTorch from scratch, or export the supplied models.** Obtain the matching runtime from the track team; model files alone are not an executable demo.
 
-- **Mobile / Galaxy S25 Ultra:** install the SM8750 QNN model and Android runtime bundle supplied for this track. Follow its model-specific launch, preprocessing, and output instructions, then [integrate into your app](#android-development-workflow). Show a camera/image input and a visible inference result. The S25 QNN install bundle and runnable sample are not yet included in this repository; obtain them from the track team before starting. The XR commands below use a different runner and cannot launch QNN artifacts.
-- **XR / Galaxy XR:** download the [XR model ZIP](artifacts/xr-model-bundle.zip), install it as shown below, and run [XNNPACK](#xnnpack-path--cpu) first. Then try [Vulkan](#vulkan-path--adreno-gpu), [validate a real image](#validate-on-a-real-image-recommended), and connect the result to your headset interaction. Retail Galaxy XR NPU access is unavailable in the recorded validation; NPU setup is not a prerequisite.
+- **Mobile / Galaxy S25 Ultra:** install the SM8750 QNN model and Android runtime bundle supplied for this track. Follow its model-specific launch, preprocessing, and output instructions, then [integrate into your app](#android-development-workflow). Show a camera/image input and a visible inference result. The S25 QNN install bundle and runnable sample are not yet included in this repository; obtain them from the track team before starting.
+- **XR / Galaxy XR:** download the self-contained [xr-qnn-bundle.zip](artifacts/xr-qnn-bundle.zip), [install it](#install-the-xr-demo-files), and run the [QNN path](#qnn-path--hexagon-npu-v69) on the Hexagon NPU, then connect the result to your headset interaction. QNN is the primary, highest-performance path and is validated on retail Galaxy XR. An [XNNPACK CPU fallback](#xnnpack-fallback--cpu-not-recommended) is available if your firmware blocks NPU access; NPU source builds are not a prerequisite.
 
 For either device, your demo should accept a real input, display the result, and repeat after an app restart. Record end-to-end latency and check sustained behavior using [Testing](#testing). Keep phone and headset measurements separate.
 
 ## Install the XR demo files
 
-On a Linux or WSL host with Android platform tools (`adb`) and `unzip`, enable debugging on the headset and authorize the host. Run `adb devices` and use the serial shown for your headset. Download the ZIP above, then run from its download directory:
+On a Linux or WSL host with Android platform tools (`adb`) and `unzip`, enable wireless debugging on the headset and authorize the host. Use the `ip:port` shown in the headset's wireless debugging settings as `DEVICE`. Download [xr-qnn-bundle.zip](artifacts/xr-qnn-bundle.zip), then run from its download directory:
 
 ```bash
-export DEVICE=YOUR_ADB_SERIAL
-export WORK_DIR="$HOME/executorch-hackathon/work"
-export REMOTE_DIR=/data/local/tmp/executorch_validation
-mkdir -p "$WORK_DIR"
-unzip xr-model-bundle.zip -d "$WORK_DIR"
-export WORK_DIR="$WORK_DIR/xr-model-bundle"
-cd "$WORK_DIR"
+export DEVICE=<headset-ip>:<port>
+unzip xr-qnn-bundle.zip
+cd xr-qnn-bundle
 sha256sum -c SHA256SUMS
-adb -s "$DEVICE" get-state
-export RUNNER=/path/to/supplied/executor_runner
-test -f "$RUNNER"
+adb connect "$DEVICE"
+adb -s "$DEVICE" shell getprop ro.build.version.incremental
 ```
 
-Replace the serial and runner path before continuing. Expect all three hashes to pass and ADB to report `device`. If no runner was supplied, ask the track team for the ExecuTorch v1.5.1 ARM64 Android runner with XNNPACK and Vulkan support. Next, [stage the runner](#stage-the-supplied-arm64-runner) and follow the CPU/GPU commands. Python, PyTorch, torchvision, NumPy, and Pillow are needed only for the host-side real-image/reference check; use the track's prepared Python environment for that step.
+Replace the serial before continuing. Expect the hashes to pass and ADB to report `device`. The bundle is self-contained: it supplies the QNN `.pte`, `qnn_executor_runner`, `libqnn_executorch_backend.so`, the matching QAIRT runtime libraries, and a `run_on_galaxy_xr.sh` script. You do **not** need to build ExecuTorch or install the QAIRT SDK for the demo; only `adb` is required.
+
+> **Firmware check.** The NPU path is validated on firmware `I610UEU1AYIA`. Firmware `I610UEU2AZF3` blocks NPU access; on those units use the [XNNPACK CPU fallback](#xnnpack-fallback--cpu-not-recommended). The `getprop` above reports the firmware build.
+
+Then run the demo from inside `xr-qnn-bundle`:
+
+```bash
+DEVICE="$DEVICE" ./run_on_galaxy_xr.sh
+```
+
+Expected: `Model executed successfully.` and about **7.2 ms** per inference. The script stages the model, runner, and libraries and runs on the NPU; [QNN Path — Hexagon NPU](#qnn-path--hexagon-npu-v69) documents the same steps run by hand. Python, PyTorch, torchvision, NumPy, and Pillow are needed only for the host-side real-image/reference check; use the track's prepared Python environment for that step.
 
 ## Contents
 
@@ -57,15 +62,12 @@ Replace the serial and runner path before continuing. Expect all three hashes to
     - [Correctness Checks](#correctness-checks)
     - [Performance Measurements](#performance-measurements)
     - [Backend Comparison](#backend-comparison)
-  - [Added Backend Extension — XNNPACK and Vulkan](#added-backend-extension--xnnpack-and-vulkan)
+  - [Validated On-Device Workflow](#validated-on-device-workflow)
     - [Backend Selection](#backend-selection-1)
-    - [Stage the supplied ARM64 runner](#stage-the-supplied-arm64-runner)
-    - [XNNPACK Path — CPU](#xnnpack-path--cpu)
-    - [Vulkan Path — Adreno GPU](#vulkan-path--adreno-gpu)
+    - [Additional Host Parameters](#additional-host-parameters)
+    - [QNN Path — Hexagon NPU (V69)](#qnn-path--hexagon-npu-v69)
+    - [XNNPACK Fallback — CPU (not recommended)](#xnnpack-fallback--cpu-not-recommended)
     - [Using Attendee-Downloaded Precompiled Models](#using-attendee-downloaded-precompiled-models)
-    - [Compare XNNPACK and Vulkan Outputs](#compare-xnnpack-and-vulkan-outputs)
-      - [Validate on a real image (recommended)](#validate-on-a-real-image-recommended)
-      - [Quantized XNNPACK (INT8)](#quantized-xnnpack-int8)
     - [Backend-Specific Troubleshooting](#backend-specific-troubleshooting)
   - [Additional Resources](#additional-resources)
   - [Device Details](#device-details)
@@ -85,11 +87,10 @@ Replace the serial and runner path before continuing. Expect all three hashes to
       - [Compiling Models](#compiling-models)
         - [Common Arguments](#common-arguments)
         - [Example Pattern](#example-pattern)
-      - [Build the Android Runtime](#build-the-android-runtime)
-      - [Additional Host Parameters](#additional-host-parameters)
-      - [Build the Shared ARM64 Runner](#build-the-shared-arm64-runner)
+      - [Build the QNN Runner and Compile a Model](#build-the-qnn-runner-and-compile-a-model)
+      - [Build the Android Runtime (AAR)](#build-the-android-runtime-aar)
+      - [Build the XNNPACK CPU Runner](#build-the-xnnpack-cpu-runner)
       - [Export XNNPACK MobileNet V2](#export-xnnpack-mobilenet-v2)
-      - [Export Vulkan MobileNet V2](#export-vulkan-mobilenet-v2)
 
 ## Core Architectural Concepts
 
@@ -146,11 +147,10 @@ ExecuTorch supports multiple acceleration backends. Select the backend according
 
 | Backend              | Capability                                                 | Optimal use case                                  |
 | -------------------- | ---------------------------------------------------------- | ------------------------------------------------- |
-| **XNNPACK CPU**      | Portable CPU acceleration and broad operator compatibility | Maximum compatibility and CPU fallback            |
-| **Vulkan GPU**       | Parallel GPU acceleration                                  | GPU-based mobile inference                        |
-| **Qualcomm QNN NPU** | Snapdragon-specific AI acceleration                        | Highest performance and efficiency when supported |
+| **Qualcomm QNN NPU** | Snapdragon-specific AI acceleration                        | Highest performance and efficiency — preferred    |
+| **XNNPACK CPU**      | Portable CPU acceleration and broad operator compatibility | Fallback only, when QNN/NPU is unavailable        |
 
-> **For Snapdragon devices:** Qualcomm QNN is the preferred backend when the required device access, SDK, and signing conditions are available. XNNPACK and Vulkan provide practical alternatives when QNN/NPU deployment is unavailable or restricted.
+> **For Snapdragon devices:** Qualcomm QNN is the preferred backend and the focus of this guide. XNNPACK on the CPU is a portable fallback as it does not use the NPU and is not recommended when QNN is available.
 
 ## ExecuTorch Runtime Overview
 
@@ -169,24 +169,13 @@ Qualcomm AI Runtime QAIRT SDK
 Snapdragon NPU
 ```
 
-For XNNPACK or Vulkan deployment, the backend path changes as follows:
-
-```text
-Android Application
-        │
-        ▼
-ExecuTorch Runtime
-        ├── XNNPACK backend ──► CPU
-        └── Vulkan backend  ──► Adreno GPU
-```
-
 ### ExecuTorch × Qualcomm AI Runtime QAIRT
 
 The QNN deployment workflow is:
 
-1. Install the track’s prepared model bundle.
-2. Confirm its backend and target device.
-3. Obtain the matching Android runtime and QNN libraries from the track team.
+1. Install the track's prepared model bundle.
+2. Confirm its backend and target device (SM8750 / V79 or SXR2230P / V69).
+3. Obtain the matching Android runner and QNN libraries from the track team.
 4. Push the compiled model and required libraries to the target device.
 5. Run inference on the device.
 
@@ -202,11 +191,8 @@ The Qualcomm QNN backend is designed to map supported model operations to Snapdr
 - A matching QAIRT/QNN SDK.
 - Correct host and Android toolchain configuration.
 - Compatible model operators and data types.
-- Required device permissions and signed runtime components.
 
-If QNN/NPU access is unavailable for a target device, use an XNNPACK or Vulkan backend artifact instead of treating QNN as a required prerequisite for the hackathon project.
-
-> **Galaxy XR:** QNN/NPU access is not available to third-party code on retail Galaxy XR units (validated 2026-10-12 on firmware `I610UEU2AZF3`). FastRPC refuses to create a CDSP process from `adb shell` and from installed apps, in both unsigned and signed process-domain modes. Use the XNNPACK or Vulkan path for the XR track.
+> **Galaxy XR — QNN/NPU validated.** On Galaxy XR (SXR2230P, Hexagon HTP **V69**), the QNN DSP and GPU backends both pass `qnn-platform-validator --backend all --testBackend` with on-device unit tests. FastRPC creates a CDSP process and loads `libQnnHtpV69Skel.so`. QNN is the preferred, highest-performance backend: see [QNN Path — Hexagon NPU](#qnn-path--hexagon-npu-v69). If QNN/NPU is unavailable on a target unit, fall back to the XNNPACK CPU path.
 
 ## Android Development Workflow
 
@@ -214,7 +200,7 @@ After the command-line demo works, integrate the model into your Android app. Th
 
 ### Integrate the Runtime Using an AAR
 
-Obtain a backend-compatible AAR from the track team. The model ZIP and command-line runner do not include an app runtime. Place the supplied archive in the application's `libs` directory and add it to the module-level Gradle file:
+Obtain a backend-compatible AAR from the track team. The model bundle and command-line runner do not include an app runtime. Place the supplied archive in the application's `libs` directory and add it to the module-level Gradle file:
 
 ```kotlin
 dependencies {
@@ -248,7 +234,6 @@ The application must use a runtime configuration compatible with the model artif
 | -------------- | ------------------------------------------------------------- |
 | QNN `.pte`     | Qualcomm QNN runtime and required QAIRT components            |
 | XNNPACK `.pte` | ExecuTorch XNNPACK backend                                    |
-| Vulkan `.pte`  | ExecuTorch Vulkan backend and compatible Vulkan device/driver |
 
 ## Testing
 
@@ -276,7 +261,7 @@ Measure:
 
 ### Backend Comparison
 
-When comparing XNNPACK, Vulkan, and QNN results, use the same:
+When comparing QNN and XNNPACK results, use the same:
 
 - Model version
 - Input data
@@ -287,87 +272,143 @@ When comparing XNNPACK, Vulkan, and QNN results, use the same:
 
 Numerical outputs may differ slightly between backends because of differences in kernels, precision, operator implementation, and hardware execution. Compare tolerances and task-level accuracy rather than requiring byte-for-byte identical output.
 
-## Added Backend Extension — XNNPACK and Vulkan
+## Validated On-Device Workflow
 
-The mobile guide above is retained as the baseline Qualcomm × Meta ExecuTorch Hackathon workflow. The following additions provide the flags, parameters, artifacts, and runtime commands required to support XNNPACK on the CPU and Vulkan on the GPU. These additions do not replace the mobile/QNN workflow; they add two alternative backend paths.
-
-> **Validation status:** every command in this section was run on a retail Samsung Galaxy XR (SXR2230P, Android API 34) on 2026-10-12, using ExecuTorch `v1.5.1`, Android NDK r26c, Vulkan SDK 1.4.341.1 and a WSL Ubuntu 22.04 host. Measured results are listed under each path.
+This section provides the flags, parameters, artifacts, and runtime commands validated on a Samsung Galaxy XR (SXR2230P, Android API 34). QNN on the Hexagon NPU is the primary path; XNNPACK on the CPU is a portable fallback. It assumes the supplied model and runner bundle from [Install the XR demo files](#install-the-xr-demo-files); building them from source is optional and covered in [Appendix A](#appendix-a-optional-source-builds-and-model-export).
 
 ### Backend Selection
 
-| Backend | Target                   | Model artifact                | Required build option                                  |
-| ------- | ------------------------ | ----------------------------- | ------------------------------------------------------ |
-| XNNPACK | CPU                      | XNNPACK-compatible `.pte`     | `-DEXECUTORCH_BUILD_XNNPACK=ON`                        |
-| Vulkan  | Adreno GPU               | Vulkan-compatible FP16 `.pte` | `-DEXECUTORCH_BUILD_VULKAN=ON` plus `-DGLSLC_PATH=...` |
-| QNN     | Qualcomm accelerator/NPU | QNN-compatible `.pte`         | Existing mobile-guide QNN workflow                     |
+| Backend | Target               | Model artifact            | Supplied by                                                        |
+| ------- | -------------------- | ------------------------- | ------------------------------------------------------------------ |
+| QNN     | Qualcomm Hexagon NPU | QNN-compatible `.pte`     | Track bundle (`qnn_executor_runner` + QNN libs); see Appendix A    |
+| XNNPACK | CPU (fallback)       | XNNPACK-compatible `.pte` | Track bundle (`executor_runner` built with `-DEXECUTORCH_BUILD_XNNPACK=ON`) |
 
-Use the supplied ARM64 Android runner with XNNPACK and Vulkan enabled. The model artifact selects the backend. Building a replacement runner is optional; see Appendix A.
+Select the backend through the precompiled model artifact. A `.pte` is backend-specific, and the runner does not convert between backends at runtime.
 
-### Stage the supplied ARM64 runner
+### Additional Host Parameters
 
-Use the compatible runner supplied by the track team (the model ZIP does not include it). Set `RUNNER` to its local path, then stage it:
-
+Set these in the Linux host environment. Adapt paths to the workshop machine:
 
 ```bash
+export DEVICE=YOUR_ADB_SERIAL
+# Persistent hackathon project directory
+export WORK_DIR="$HOME/executorch-hackathon/work"
+mkdir -p "$WORK_DIR"
+export TORCH_HOME="$WORK_DIR/torch-cache"
+```
+
+For wireless debugging, `DEVICE` is the `ip:port` shown in the headset's wireless debugging settings. Connect at the start of every terminal session: a new terminal can restart the adb server, which drops wireless connections. The port changes when the headset reboots or wireless debugging is toggled.
+
+```bash
+adb connect "$DEVICE"
+```
+
+Validate the target and tools:
+
+```bash
+adb -s "$DEVICE" get-state
+adb -s "$DEVICE" shell getprop ro.product.cpu.abi
+adb -s "$DEVICE" shell getprop ro.build.version.sdk
+adb -s "$DEVICE" shell getprop ro.soc.model
+```
+
+Expected on Galaxy XR: `device`, `arm64-v8a`, `34`, and `SXR2230P`.
+
+### QNN Path — Hexagon NPU (V69)
+
+This path runs the supplied QNN model on the Snapdragon NPU through the Qualcomm QNN backend. The runner is `qnn_executor_runner`. Obtain the QNN `.pte` (compiled for the device's Hexagon arch), `qnn_executor_runner`, `libqnn_executorch_backend.so`, and the matching QAIRT runtime libraries from the track bundle; building them yourself is optional (see [Appendix A](#build-the-qnn-runner-and-compile-a-model)).
+
+Set `QNN_SDK_ROOT` to the supplied QAIRT runtime libraries. The staging commands reference the extracted bundle in `$WORK_DIR` for the model, runner, and backend, and `$QNN_SDK_ROOT/lib/...` for the QNN/HTP libraries:
+
+```bash
+export QNN_SDK_ROOT=/path/to/qairt/2.51.0.260929   # supplied QAIRT runtime libraries
+export QNN_REMOTE_DIR=/data/local/tmp/executorch_qnn
+```
+
+> **The QAIRT version used to compile the `.pte` must match the runtime libraries you push.** If you hit a `Can't create context from binary` error at runtime, the QNN API version used to compile the `.pte` does not match the runtime libraries; rebuild the model and runtime against the same SDK. On Galaxy XR, the full QNN path was validated with QAIRT **2.51.0.260929**, and `qnn-platform-validator` passes with both **2.50.0.260828** and **2.51.0.260929**.
+
+**Stage the model, runner, backend, and the V69 HTP libraries on device.** The NPU needs the generic HTP library, the system library, the per-arch **V69** stub (CPU-side) and skel (DSP-side) libraries:
+
+```bash
+adb -s "$DEVICE" shell "mkdir -p $QNN_REMOTE_DIR"
+
+# QNN runtime libraries (aarch64-android)
+adb -s "$DEVICE" push "$QNN_SDK_ROOT/lib/aarch64-android/libQnnHtp.so"        "$QNN_REMOTE_DIR/"
+adb -s "$DEVICE" push "$QNN_SDK_ROOT/lib/aarch64-android/libQnnSystem.so"     "$QNN_REMOTE_DIR/"
+adb -s "$DEVICE" push "$QNN_SDK_ROOT/lib/aarch64-android/libQnnHtpV69Stub.so" "$QNN_REMOTE_DIR/"
+adb -s "$DEVICE" push "$QNN_SDK_ROOT/lib/aarch64-android/libQnnHtpPrepare.so" "$QNN_REMOTE_DIR/"
+
+# V69 skel library (DSP-side, from the hexagon-v69 toolchain dir)
+adb -s "$DEVICE" push "$QNN_SDK_ROOT/lib/hexagon-v69/unsigned/libQnnHtpV69Skel.so" "$QNN_REMOTE_DIR/"
+
+# Model, runner, and ExecuTorch QNN backend (from the supplied bundle)
+adb -s "$DEVICE" push "$WORK_DIR/dlv3_qnn.pte" "$QNN_REMOTE_DIR/"
+adb -s "$DEVICE" push "$WORK_DIR/qnn_executor_runner" "$QNN_REMOTE_DIR/"
+adb -s "$DEVICE" push "$WORK_DIR/libqnn_executorch_backend.so" "$QNN_REMOTE_DIR/"
+adb -s "$DEVICE" shell "chmod 755 $QNN_REMOTE_DIR/qnn_executor_runner"
+```
+
+**Verify the backend first** (recommended on a new unit). The QAIRT SDK ships `qnn-platform-validator`, which runs a real on-device compute test on each backend. This is the cheapest check of whether the unit allows NPU access — run it before the model:
+
+```bash
+adb -s "$DEVICE" push "$QNN_SDK_ROOT/bin/aarch64-android/qnn-platform-validator" "$QNN_REMOTE_DIR/"
+adb -s "$DEVICE" push "$QNN_SDK_ROOT/lib/aarch64-android/." "$QNN_REMOTE_DIR/"
+adb -s "$DEVICE" push "$QNN_SDK_ROOT/lib/hexagon-v69/unsigned/." "$QNN_REMOTE_DIR/dsp/"
+adb -s "$DEVICE" shell "cd $QNN_REMOTE_DIR && chmod +x qnn-platform-validator \
+  && export LD_LIBRARY_PATH=$QNN_REMOTE_DIR \
+  && export ADSP_LIBRARY_PATH=$QNN_REMOTE_DIR/dsp \
+  && ./qnn-platform-validator --backend all --testBackend"
+```
+
+Expected on Galaxy XR: `Unit Test on the backend DSP: Passed.` and `QNN is supported for backend DSP on the device.` The validator should load `libQnnHtpV69CalculatorStub.so` and execute a compute function on Hexagon V69.
+
+> The library push copies the SDK's entire `lib/aarch64-android` folder (about 600 MB). If the DSP unit test fails here, the unit does not allow NPU access — use the XNNPACK path.
+
+**Run on the NPU.** Both `LD_LIBRARY_PATH` (CPU-side `.so` resolution) and `ADSP_LIBRARY_PATH` (Hexagon skel resolution) must point at the device directory. `qnn_executor_runner` prints its log to the terminal (stderr), not to logcat:
+
+```bash
+adb -s "$DEVICE" shell "cd $QNN_REMOTE_DIR \
+  && export LD_LIBRARY_PATH=$QNN_REMOTE_DIR \
+  && export ADSP_LIBRARY_PATH=$QNN_REMOTE_DIR \
+  && ./qnn_executor_runner --model_path ./dlv3_qnn.pte --warm_up 10 --iteration 50" 2>&1 \
+  | grep -E "Method loaded|Model executed|inferences took"
+```
+
+Expected: `Model executed successfully.` and a line such as `50 inferences took 361.1 ms, avg 7.22 ms`.
+
+Measured on Galaxy XR (QAIRT 2.51): DeepLab V3 (ResNet-101, INT8) loads in about 220 ms and runs at **7.22 ms** per inference on Hexagon V69 (50 inferences after 10 warm-up runs).
+
+To confirm the run actually used the NPU, check the FastRPC log for the loaded skel library:
+
+```bash
+adb -s "$DEVICE" logcat -d -b all | grep remote_handle64_open
+```
+
+The confirmation line is `remote_handle64_open: Successfully opened handle ... libQnnHtpV69Skel.so`. A successful run may also log `remote_handle_control_domain failed for request ID 2 ... No such file or directory` and `open_shell failed for domain 3 ... Permission denied`; both are expected and harmless.
+
+> On Git Bash / MSYS, prefix `adb` commands that use `/data/local/tmp/...` paths with `MSYS_NO_PATHCONV=1`, or the device path is rewritten to a Windows path (`C:/Program Files/Git/data/...`) and the push fails with `secure_mkdirs failed`.
+
+### XNNPACK Fallback — CPU (not recommended)
+
+> XNNPACK runs entirely on the CPU and does not use the NPU. Use it only when the QNN path is unavailable.
+
+Use the supplied `executor_runner` (CPU build) and `mv2_xnnpack_fp32.pte` from the track bundle. Set `RUNNER` to the supplied binary; building the runner and exporting the model yourself is optional (see [Appendix A](#build-the-xnnpack-cpu-runner)).
+
+```bash
+export RUNNER="$WORK_DIR/executor_runner"
+export REMOTE_DIR=/data/local/tmp/executorch_validation
 adb -s "$DEVICE" shell "mkdir -p $REMOTE_DIR"
 adb -s "$DEVICE" push "$RUNNER" "$REMOTE_DIR/executor_runner"
 adb -s "$DEVICE" shell "chmod 755 $REMOTE_DIR/executor_runner"
-```
 
-### XNNPACK Path — CPU
-
-Use the installed `mv2_xnnpack_fp32.pte` from the track bundle:
-
-```bash
 adb -s "$DEVICE" push "$WORK_DIR/mv2_xnnpack_fp32.pte" "$REMOTE_DIR/"
-```
 
-Run it with the shared runner:
-
-```bash
-adb -s "$DEVICE" logcat -c
 adb -s "$DEVICE" shell "cd $REMOTE_DIR && ./executor_runner \
   --model_path=mv2_xnnpack_fp32.pte \
   --output_file=xnnpack \
   --num_executions=5 \
   --print_output=none"
-
-adb -s "$DEVICE" logcat -d -s ExecuTorch:I '*:S' > "$WORK_DIR/xnnpack.log"
-grep -E 'Model loaded in|Model executed successfully|Writing output' "$WORK_DIR/xnnpack.log"
-adb -s "$DEVICE" pull "$REMOTE_DIR/xnnpack-0.bin" "$WORK_DIR/xnnpack-0.bin"
 ```
-
-Expected validation: five successful executions, a 4,000-byte output file for the prepared MobileNet V2 example, and 1,000 finite FP32 output values.
-
-Measured on Galaxy XR: model load about 20 ms, 5 executions in about 35 ms, steady-state latency about 4.6 ms per inference.
-
-### Vulkan Path — Adreno GPU
-
-Use the installed `mv2_vulkan.pte` from the track bundle:
-
-```bash
-adb -s "$DEVICE" push "$WORK_DIR/mv2_vulkan.pte" "$REMOTE_DIR/"
-```
-
-Run it with the same runner:
-
-```bash
-adb -s "$DEVICE" logcat -c
-adb -s "$DEVICE" shell "cd $REMOTE_DIR && ./executor_runner \
-  --model_path=mv2_vulkan.pte \
-  --output_file=vulkan \
-  --num_executions=5 \
-  --print_output=none"
-
-adb -s "$DEVICE" logcat -d -v brief > "$WORK_DIR/vulkan.log"
-grep -E 'Model loaded in|Model executed successfully|Writing output' "$WORK_DIR/vulkan.log"
-grep -iE 'AdrenoVK|Driver Path|ExecuTorch Vulkan Delegate' "$WORK_DIR/vulkan.log" | head
-adb -s "$DEVICE" pull "$REMOTE_DIR/vulkan-0.bin" "$WORK_DIR/vulkan-0.bin"
-```
-
-Expected validation: five successful executions, a 4,000-byte output file for the prepared MobileNet V2 example, and Vulkan/Adreno initialization in logcat (`Driver Path : /vendor/lib64/hw/vulkan.adreno.so`, `Application Name : ExecuTorch Vulkan Delegate`). The first execution may include GPU and pipeline initialization, so separate model-load time from steady-state execution time.
-
-Measured on Galaxy XR: model load about 440–1,040 ms (GPU pipeline creation), 5 executions in about 27 ms, steady-state latency about 5.4 ms per inference.
 
 ### Using Attendee-Downloaded Precompiled Models
 
@@ -379,97 +420,50 @@ sha256sum "$MODEL"
 adb -s "$DEVICE" push "$MODEL" "$REMOTE_DIR/model.pte"
 ```
 
-Run the artifact with the same runner:
+Run the artifact with the matching runner.
+
+**QNN `.pte`** — stage the QNN libraries and `qnn_executor_runner` first (see [QNN Path](#qnn-path--hexagon-npu-v69)), and use the same QAIRT version the `.pte` was compiled with:
 
 ```bash
+adb -s "$DEVICE" push "$MODEL" "$QNN_REMOTE_DIR/model.pte"
+adb -s "$DEVICE" shell "cd $QNN_REMOTE_DIR \
+  && export LD_LIBRARY_PATH=$QNN_REMOTE_DIR \
+  && export ADSP_LIBRARY_PATH=$QNN_REMOTE_DIR \
+  && ./qnn_executor_runner --model_path ./model.pte --warm_up 10 --iteration 50" 2>&1 \
+  | grep -E "Model executed|inferences took"
+```
+
+**XNNPACK `.pte`:**
+
+```bash
+adb -s "$DEVICE" logcat -c
 adb -s "$DEVICE" shell "cd $REMOTE_DIR && ./executor_runner \
   --model_path=model.pte \
   --output_file=output \
   --num_executions=5 \
   --print_output=none"
+adb -s "$DEVICE" logcat -d -s ExecuTorch:I '*:S' | grep -E 'Model executed successfully|Writing output'
+adb -s "$DEVICE" shell ls -l "$REMOTE_DIR/output-0.bin"
 ```
 
-The runner does not convert a QNN, XNNPACK, or Vulkan artifact into another backend at runtime. Distribute the backend name, expected input format, model hash, and expected output shape with every precompiled `.pte` file.
+An exit code of 0 alone does not confirm the model ran; check the success line and the output file.
 
-### Compare XNNPACK and Vulkan Outputs
-
-```bash
-adb -s "$DEVICE" pull "$REMOTE_DIR/xnnpack-0.bin" "$WORK_DIR/xnnpack-0.bin"
-adb -s "$DEVICE" pull "$REMOTE_DIR/vulkan-0.bin" "$WORK_DIR/vulkan-0.bin"
-
-python - <<'PY'
-import os
-import numpy as np
-root = os.environ["WORK_DIR"]
-for backend in ("xnnpack", "vulkan"):
-    output = np.fromfile(f"{root}/{backend}-0.bin", dtype=np.float32)
-    assert output.size == 1000, (backend, output.size)
-    assert np.isfinite(output).all(), backend
-    print(backend, "values:", output.size, "top-1 index:", int(output.argmax()))
-PY
-```
-
-The two backends may use different numeric paths, such as FP32 on XNNPACK and FP16 internally on Vulkan. Exact logits need not match; validate finite values, output shape, and application-level correctness. The top class is a useful sanity check but is not a performance benchmark.
-
-> **This check runs on an all-ones input.** Without `--inputs`, `executor_runner` fills every input with 1.0. Both backends report top-1 index 885 ("velvet"), which is what MobileNet V2 predicts for a flat, featureless image. It confirms the pipeline runs, not that the model is correct.
-
-#### Validate on a real image (recommended)
-
-Feed both backends the same preprocessed image and compare against PyTorch on the host. Replace `photo.jpg` with any test image:
-
-```bash
-python - photo.jpg <<'PY'
-import os, sys, numpy as np, torch
-from PIL import Image
-from torchvision.models import mobilenet_v2, MobileNet_V2_Weights
-root = os.environ["WORK_DIR"]
-weights = MobileNet_V2_Weights.DEFAULT
-x = weights.transforms()(Image.open(sys.argv[1]).convert("RGB")).unsqueeze(0).contiguous()
-x.numpy().astype(np.float32).tofile(f"{root}/img.bin")            # 602,112 bytes, 1x3x224x224
-with torch.no_grad():
-    mobilenet_v2(weights=weights).eval()(x).numpy().astype(np.float32).tofile(f"{root}/ref.bin")
-PY
-
-adb -s "$DEVICE" push "$WORK_DIR/img.bin" "$REMOTE_DIR/"
-for m in mv2_xnnpack_fp32 mv2_vulkan; do
-  adb -s "$DEVICE" shell "cd $REMOTE_DIR && ./executor_runner --model_path=$m.pte \
-    --inputs=img.bin --output_file=${m}_img --print_output=none"
-  adb -s "$DEVICE" pull "$REMOTE_DIR/${m}_img-0.bin" "$WORK_DIR/"
-done
-
-python - <<'PY'
-import os, numpy as np
-from torchvision.models import MobileNet_V2_Weights
-root, cats = os.environ["WORK_DIR"], MobileNet_V2_Weights.DEFAULT.meta["categories"]
-ref = np.fromfile(f"{root}/ref.bin", dtype=np.float32)
-for m in ("mv2_xnnpack_fp32", "mv2_vulkan"):
-    out = np.fromfile(f"{root}/{m}_img-0.bin", dtype=np.float32)
-    cos = float(ref @ out / (np.linalg.norm(ref) * np.linalg.norm(out)))
-    top5 = len(set(np.argsort(ref)[-5:]) & set(np.argsort(out)[-5:]))
-    print(f"{m:<18} top-1 {cats[out.argmax()]!r} (PyTorch {cats[ref.argmax()]!r})  top-5 overlap {top5}/5  cosine {cos:.4f}")
-PY
-```
-
-Measured on Galaxy XR with three PASCAL VOC images: XNNPACK FP32 matched PyTorch exactly (top-1 3/3, top-5 5/5, cosine 1.0000); Vulkan FP16 matched top-1 on 3/3 images with cosine 0.9999.
-
-#### Quantized XNNPACK (INT8)
-
-`python -m examples.xnnpack.aot_compiler --model_name mv2 --quantize --output_dir "$WORK_DIR"` produces `mv2_xnnpack_q8.pte` (static per-channel INT8). It runs about 30% faster than FP32 on Galaxy XR (about 3.3 ms steady state), but the script calibrates on a single random tensor, so accuracy is poor: on the same three images it matched PyTorch's top-1 on only 1/3 (cosine down to 0.84). Treat it as a smoke test of the INT8 path. For a real project, calibrate with a few hundred representative inputs using `prepare_pt2e` / `convert_pt2e` and `XNNPACKQuantizer`.
+The runner does not convert a QNN or XNNPACK artifact into another backend at runtime. Distribute the backend name, expected input format, model hash, and expected output shape with every precompiled `.pte` file. For QNN artifacts, also state the QAIRT version and `--soc_model` used to compile; a mismatch with the device's libraries or Hexagon architecture prevents the model from loading.
 
 ### Backend-Specific Troubleshooting
 
 | Symptom                                                                                       | Check                                                                                                               |
 | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| QNN model: `Can't create context from binary`                                                 | QNN API version mismatch — the SDK used to compile the `.pte` differs from the runtime libraries. Rebuild both against the same `QNN_SDK_ROOT`. |
+| QNN model fails to load or `Could not open libQnnHtpV69Skel.so`                                | Confirm `--soc_model SXR2230P` (V69) at compile time, that the V69 stub + skel libs were pushed, and that `ADSP_LIBRARY_PATH` points to the device dir. |
+| `secure_mkdirs failed` on `adb push` to `/data/local/tmp/...` (Git Bash)                      | MSYS rewrote the device path to a Windows path. Prefix the command with `MSYS_NO_PATHCONV=1`.                       |
 | `Use of 'EXECUTORCH_BUILD_EXECUTOR_RUNNER' requires 'EXECUTORCH_BUILD_EXTENSION_EVALUE_UTIL'` | Add `-DEXECUTORCH_BUILD_EXTENSION_EVALUE_UTIL=ON`, delete the build directory, and configure again.                 |
-| `glslc from the Vulkan SDK must be installed` or `GL_EXT_integer_dot_product` errors          | Use `glslc` from the LunarG Vulkan SDK 1.4.341.1 or newer, not the NDK's.                                           |
-| Vulkan build fails during configuration                                                       | Confirm `GLSLC_PATH` points to an executable `glslc`.                                                               |
-| Vulkan model fails to load                                                                    | Confirm the runner was built with `-DEXECUTORCH_BUILD_VULKAN=ON` and the artifact was exported with `--force_fp16`. |
 | XNNPACK model fails to load                                                                   | Confirm the runner was built with `-DEXECUTORCH_BUILD_XNNPACK=ON` and the artifact is an XNNPACK artifact.          |
+| QNN runner output missing from logcat                                                         | `qnn_executor_runner` prints to the terminal (stderr), not logcat. Pipe with `2>&1`.                               |
 | Runner exits without an output file                                                           | Check the runner, model path, execute permission, and `ExecuTorch` logcat output.                                   |
 | `unauthorized` or `offline` in ADB                                                            | Reconnect debugging and accept the headset authorization prompt.                                                    |
-| `adb devices` is empty after a reboot (wireless debugging)                                    | The port changed. Run `adb connect <ip>:<new-port>` and update `DEVICE`.                                            |
+| `adb devices` is empty in a new terminal or after a reboot (wireless debugging)               | Run `adb connect "$DEVICE"`. After a reboot the port changes: use the new port and update `DEVICE`.                 |
 | `rg: command not found`                                                                       | Use `grep -E`, or install ripgrep (`sudo apt install ripgrep`).                                                     |
-| Vulkan logcat has no Adreno/Vulkan initialization                                             | Verify the model is Vulkan-compatible and inspect the complete logcat, including vendor Vulkan messages.            |
 
 ## Additional Resources
 
@@ -486,17 +480,16 @@ Measured on Galaxy XR with three PASCAL VOC images: XNNPACK FP32 matched PyTorch
 | **Device name**        | Samsung Galaxy S25 Ultra                   | Samsung Galaxy XR                         |
 | **Chipset**            | Snapdragon® 8 Elite for Galaxy — SM8750-AC | Snapdragon XR2+ Gen 2                     |
 | **SoC model**          | SM8750                                     | SXR2230P (`ro.soc.model`)                 |
-| **Hexagon version**    | v79                                        | v69 (not accessible on retail units)      |
-| **GPU**                | Adreno                                     | Adreno (Vulkan driver `vulkan.adreno.so`) |
+| **Hexagon version**    | v79                                        | v69                                       |
+| **GPU**                | Adreno                                     | Adreno                                    |
 | **Android API level**  | —                                          | 34                                        |
-| **Supported backends** | QNN, XNNPACK, Vulkan                       | XNNPACK, Vulkan                           |
+| **Supported backends** | QNN, XNNPACK                               | QNN, XNNPACK                              |
 
 > Verify these values against the actual target device before compiling a model, for example with `adb shell getprop ro.soc.model`.
 
-
 ## Appendix A: Optional source builds and model export
 
-Skip this appendix for the installable attendee models. Use it only to customize a runtime or export a different model. Source builds do not unlock QNN on retail Galaxy XR.
+Skip this appendix for the installable attendee models. Use it only to customize a runtime or export a different model. Model export creates a `.pte`; building ExecuTorch and the Qualcomm runner builds the runtime that runs it.
 
 ### Setup
 
@@ -520,7 +513,7 @@ git clone https://github.com/pytorch/executorch.git
 cd executorch
 
 git submodule sync
-git submodule update --init --recursive
+git submodule update --init --recursive # this is a 3GB+ download, do it before or outside of limited network, otherwise skip entirely
 ```
 
 #### Install Dependencies
@@ -542,8 +535,12 @@ The build scripts may download or configure some required artifacts automaticall
 ##### QAIRT SDK
 
 ```bash
-export QNN_SDK_ROOT=<path_to_qnn_sdk>/2.46.0.260424/
+export QNN_SDK_ROOT=<path_to_qnn_sdk>/2.51.0.260929/
 ```
+
+> The ExecuTorch Qualcomm docs recommend QNN 2.37.0 for stability, but newer SDKs work. On Galaxy XR, the full QNN path (build, compile, run on the NPU) was validated with QAIRT **2.51.0.260929**, and `qnn-platform-validator` passes with both **2.50.0.260828** and **2.51.0.260929**. Use one SDK for everything: the `build.sh` build, the `.pte` compile, and the libraries pushed to the device. If you hit a `Can't create context from binary` error at runtime, the QNN API version used to compile the `.pte` does not match the runtime libraries you should rebuild the model and runtime against the same SDK.
+>
+> `source $QNN_SDK_ROOT/bin/envsetup.sh` sets `LD_LIBRARY_PATH` and the other QNN tool/library variables for you.
 
 ##### Android NDK
 
@@ -610,7 +607,57 @@ python <qualcomm_compile_script>.py \
 
 > The exact script name and model arguments depend on the example being used. Check the current ExecuTorch Qualcomm examples before running the command.
 
-#### Build the Android Runtime
+#### Build the QNN Runner and Compile a Model
+
+Follow the [ExecuTorch Qualcomm backend docs](https://docs.pytorch.org/executorch/main/backends-qualcomm.html) for the latest commands.
+
+**Host environment:**
+
+```bash
+export QNN_SDK_ROOT=/path/to/qairt/2.51.0.260929
+export ANDROID_NDK_ROOT=/path/to/android-ndk-r26c
+export EXECUTORCH_ROOT="$PWD"            # run from the executorch repo root
+source "$QNN_SDK_ROOT/bin/envsetup.sh"   # sets LD_LIBRARY_PATH for QNN tools
+export PYTHONPATH="$EXECUTORCH_ROOT/..:$PYTHONPATH"
+export QNN_REMOTE_DIR=/data/local/tmp/executorch_qnn
+```
+
+**Build the QNN AOT components and the Android runtime:**
+
+```bash
+cd "$EXECUTORCH_ROOT"
+./backends/qualcomm/scripts/build.sh --release
+```
+
+This produces `build-android/examples/qualcomm/executor_runner/qnn_executor_runner` and `build-android/backends/qualcomm/libqnn_executorch_backend.so`.
+
+> `build.sh` deletes `build-android` and `build-x86_64` and rebuilds from scratch on every run. To rebuild incrementally after small changes, add `--no_clean`. After switching `QNN_SDK_ROOT` to a different SDK version, run a clean build.
+
+**Compile a model to a QNN `.pte`.** Use `--soc_model SXR2230P` for Galaxy XR (confirmed in the ExecuTorch `QcomChipset` enum as `SXR2230P = 53`, Hexagon **V69**). The example below compiles DeepLab V3; the Qualcomm examples live under [`examples/qualcomm`](https://github.com/pytorch/executorch/tree/main/examples/qualcomm).
+
+The script calibrates INT8 quantization on PASCAL VOC 2012 images. With `--download`, torchvision fetches the 2 GB dataset from a server that often runs at under 1 MB/s (hours). Pre-fetch it from a mirror first; torchvision verifies the checksum and skips its own download:
+
+```bash
+mkdir -p deeplab_v3/voc_image
+wget -P deeplab_v3/voc_image http://pjreddie.com/media/files/VOCtrainval_11-May-2012.tar
+md5sum deeplab_v3/voc_image/VOCtrainval_11-May-2012.tar   # must be 6cd6e144f989b92b3379bac3b3de84fd
+```
+
+```bash
+python -m examples.qualcomm.scripts.deeplab_v3 \
+  --build_folder build-android \
+  --soc_model SXR2230P \
+  --compile_only \
+  --download
+
+# Output: ./deeplab_v3/dlv3_qnn.pte
+```
+
+> **`--soc_model` must match the device.** Galaxy XR = `SXR2230P` (V69). Galaxy S25 Ultra = `SM8750` (V79). A model compiled for the wrong Hexagon arch fails to load on device. The full chipset list is the `QcomChipset` enum in `backends/qualcomm/serialization/qc_schema.py`.
+
+Stage `dlv3_qnn.pte`, `qnn_executor_runner`, `libqnn_executorch_backend.so`, and the V69 HTP libraries as shown in [QNN Path — Hexagon NPU](#qnn-path--hexagon-npu-v69).
+
+#### Build the Android Runtime (AAR)
 
 From the ExecuTorch repository root:
 
@@ -620,55 +667,11 @@ From the ExecuTorch repository root:
 
 The resulting Android library can be packaged into an application as an Android Archive (`.aar`).
 
-> **Not yet validated on device.** The app path in this section (AAR, `Module.load`, `module.forward`) has not been run on the Galaxy XR. The Vulkan backend is only included in the AAR if the library build enables it.
+> **Not yet validated on device.** The app path (AAR, `Module.load`, `module.forward`) has not been run on the Galaxy XR.
 
-#### Additional Host Parameters
+#### Build the XNNPACK CPU Runner
 
-Set these in the Linux host environment. Adapt paths to the workshop machine:
-
-```bash
-export DEVICE=YOUR_ADB_SERIAL
-# Persistent hackathon project directory
-export WORK_DIR="$HOME/executorch-hackathon/work"
-mkdir -p "$WORK_DIR"
-export ANDROID_NDK_ROOT=/path/to/android-ndk
-export GLSLC_PATH=/path/to/vulkansdk/<version>/x86_64/bin/glslc
-export TORCH_HOME="$WORK_DIR/torch-cache"
-export REMOTE_DIR=/data/local/tmp/executorch_validation
-```
-
-`glslc` must come from the **LunarG Vulkan SDK, version 1.4.341.1 or newer**. The `glslc` shipped with the Android NDK does not work: it lacks the `GL_EXT_integer_dot_product` extension, and CMake stops with a fatal error. Install the SDK on the Linux host:
-
-```bash
-wget https://sdk.lunarg.com/sdk/download/1.4.341.1/linux/vulkansdk-linux-x86_64-1.4.341.1.tar.xz
-mkdir -p "$HOME/vulkansdk"
-tar -C "$HOME/vulkansdk" -xJf vulkansdk-linux-x86_64-1.4.341.1.tar.xz
-export GLSLC_PATH="$HOME/vulkansdk/1.4.341.1/x86_64/bin/glslc"
-```
-
-For wireless debugging, `DEVICE` is the `ip:port` shown by `adb devices`. The port changes when the headset reboots or wireless debugging is toggled.
-
-Validate the target and tools:
-
-```bash
-adb -s "$DEVICE" get-state
-adb -s "$DEVICE" shell getprop ro.product.cpu.abi
-adb -s "$DEVICE" shell getprop ro.build.version.sdk
-adb -s "$DEVICE" shell getprop ro.build.fingerprint
-adb -s "$DEVICE" shell getprop ro.hardware.vulkan
-git describe --tags
-python -c 'import torch, torchvision, executorch; print(torch.__version__, torchvision.__version__)'
-test -f "$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake" && echo ndk-ok
-"$GLSLC_PATH" --version
-```
-
-Expected on Galaxy XR: `device`, `arm64-v8a`, `34`, a build fingerprint, `adreno`, the ExecuTorch tag, two version numbers, `ndk-ok`, and a `shaderc` version line.
-
-`GLSLC_PATH` must point to an executable `glslc` shader compiler. Vulkan builds require this compiler to generate the shader assets used by the Vulkan backend.
-
-#### Build the Shared ARM64 Runner
-
-Run from the ExecuTorch repository root. These are the additional CMake flags for XNNPACK and Vulkan:
+Build the CPU runner from the ExecuTorch repository root:
 
 ```bash
 cmake -S . -B "$WORK_DIR/build" \
@@ -680,16 +683,13 @@ cmake -S . -B "$WORK_DIR/build" \
   -DEXECUTORCH_BUILD_EXECUTOR_RUNNER=ON \
   -DEXECUTORCH_BUILD_EXTENSION_EVALUE_UTIL=ON \
   -DEXECUTORCH_BUILD_XNNPACK=ON \
-  -DEXECUTORCH_BUILD_VULKAN=ON \
   -DEXECUTORCH_BUILD_KERNELS_OPTIMIZED=ON \
-  -DEXECUTORCH_BUILD_KERNELS_QUANTIZED=ON \
-  -DGLSLC_PATH="$GLSLC_PATH"
+  -DEXECUTORCH_BUILD_KERNELS_QUANTIZED=ON
 
 cmake --build "$WORK_DIR/build" --target executor_runner -j"$(nproc)"
-test -x "$WORK_DIR/build/executor_runner"
 ```
 
-`EXECUTORCH_BUILD_EXTENSION_EVALUE_UTIL=ON` is required: the `executor_runner` target depends on it, the Android preset does not enable it, and configuration fails without it. The build takes several minutes; compiling the Vulkan shaders is the slowest part.
+`EXECUTORCH_BUILD_EXTENSION_EVALUE_UTIL=ON` is required: the `executor_runner` target depends on it, and the Android preset does not enable it.
 
 The Release binary keeps debug symbols (about 200 MB). Strip it before pushing; this does not change behavior:
 
@@ -699,30 +699,12 @@ The Release binary keeps debug symbols (about 200 MB). Strip it before pushing; 
 export RUNNER="$WORK_DIR/executor_runner"
 ```
 
-
 #### Export XNNPACK MobileNet V2
 
-Generate or use the precompiled XNNPACK artifact. The example below creates an FP32 MobileNet V2 artifact:
+Generate the FP32 MobileNet V2 artifact used by the [XNNPACK fallback](#xnnpack-fallback--cpu-not-recommended):
 
 ```bash
-python -m examples.xnnpack.aot_compiler \
-  --model_name mv2 \
-  --output_dir "$WORK_DIR"
-
+python -m examples.xnnpack.aot_compiler --model_name mv2 --output_dir "$WORK_DIR"
 sha256sum "$WORK_DIR/mv2_xnnpack_fp32.pte"
 adb -s "$DEVICE" push "$WORK_DIR/mv2_xnnpack_fp32.pte" "$REMOTE_DIR/"
-```
-
-#### Export Vulkan MobileNet V2
-
-Generate or use the precompiled Vulkan artifact. The example below creates an FP16 MobileNet V2 artifact:
-
-```bash
-python -m examples.vulkan.export \
-  --model_name mv2 \
-  --force_fp16 \
-  --output_dir "$WORK_DIR"
-
-sha256sum "$WORK_DIR/mv2_vulkan.pte"
-adb -s "$DEVICE" push "$WORK_DIR/mv2_vulkan.pte" "$REMOTE_DIR/"
 ```

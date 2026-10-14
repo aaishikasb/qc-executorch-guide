@@ -1,31 +1,35 @@
-# Mobile + XR Artifacts
+# XR NPU Artifacts
 
 [Mobile + XR guide](../README.md) · [All tracks](../../README.md)
 
-ExecuTorch models will be available to install for Mobile and XR. Participants do not need to download and compile ExecuTorch from scratch.
+DeepLab V3 (ResNet-101, INT8) precompiled for the Galaxy XR NPU (Hexagon HTP V69), with the matching QNN runtime. Participants do not need to build ExecuTorch or install the QAIRT SDK; only `adb` is required.
 
-## XR download
+## Download
 
-Download [xr-model-bundle.zip](xr-model-bundle.zip), then follow [installation and device setup](../README.md#install-the-xr-demo-files). The ZIP contains the three models below, `models.json`, `SHA256SUMS`, and a README. It does **not** contain `executor_runner` or an Android AAR; obtain the compatible runtime from the track team.
+Download [xr-qnn-bundle.zip](xr-qnn-bundle.zip). The ZIP contains the model, `qnn_executor_runner`, the QNN libraries below, `run_on_galaxy_xr.sh`, `SHA256SUMS`, and this README.
 
-Validated on Samsung Galaxy XR with ExecuTorch v1.5.1.
-Run any file with the shared `executor_runner` (built with XNNPACK and Vulkan).
+Validated on Samsung Galaxy XR firmware `I610UEU1AYIA` with ExecuTorch v1.5.1 and QAIRT 2.51.0.260929. Firmware `I610UEU2AZF3` blocks NPU access; on those units fall back to the guide's [XNNPACK CPU path](../README.md#xnnpack-fallback--cpu-not-recommended). Check with `adb shell getprop ro.build.version.incremental`.
 
-| File                   | Backend             | Precision               |
-| ---------------------- | ------------------- | ----------------------- |
-| `mv2_vulkan.pte`       | Vulkan (Adreno GPU) | FP16 (--force_fp16)     |
-| `mv2_xnnpack_fp32.pte` | XNNPACK (CPU)       | FP32                    |
-| `mv2_xnnpack_q8.pte`   | XNNPACK (CPU)       | INT8 static per-channel |
+| File                           | Runs on       | Purpose                              |
+| ------------------------------ | ------------- | ------------------------------------ |
+| `dlv3_qnn.pte`                 | NPU           | DeepLab V3 model, `--soc_model SXR2230P` |
+| `qnn_executor_runner`          | CPU           | Runner for QNN `.pte` files          |
+| `libqnn_executorch_backend.so` | CPU           | ExecuTorch QNN delegate              |
+| `libQnnHtp.so`, `libQnnSystem.so`, `libQnnHtpPrepare.so`, `libQnnHtpV69Stub.so` | CPU | QAIRT 2.51 runtime |
+| `libQnnHtpV69Skel.so`          | NPU           | NPU-side library (unsigned)          |
 
-**Input:** `float32` tensor `1x3x224x224` (NCHW, 602,112 bytes), ImageNet preprocessing (resize 232, center-crop 224, normalize mean `[0.485, 0.456, 0.406]`, std `[0.229, 0.224, 0.225]`).
-**Output:** `float32` `1x1000` ImageNet-1k logits (4,000 bytes).
+**Input:** `float32` tensor `1x3x224x224` (NCHW, 602,112 bytes): resize to 224×224, normalize mean `[0.485, 0.456, 0.406]`, std `[0.229, 0.224, 0.225]`.
+**Output:** output 0 is `float32` `1x21x224x224` per-pixel logits for the 21 PASCAL VOC classes (argmax for the mask); output 1 is an auxiliary head and can be ignored.
 
-After extracting, verify from inside `xr-model-bundle`: `sha256sum -c SHA256SUMS`.
+## Run
 
-The INT8 model is a smoke-test artifact calibrated on a random tensor; use FP32 or Vulkan FP16 for the real-image demo. See the guide for the recorded accuracy limits.
+After extracting, from inside `xr-qnn-bundle`:
 
-## Mobile installation
+```bash
+sha256sum -c SHA256SUMS
+DEVICE=<headset-ip>:<port> ./run_on_galaxy_xr.sh
+```
 
-The Galaxy S25 Ultra SM8750 QNN model/runtime bundle and installation link are not yet included here. Obtain the model, matching Android runner or demo app, QNN libraries, sample inputs/reference outputs, and launch instructions from the track team. For app integration, obtain a backend-compatible AAR as well. The XR model ZIP does not supply a mobile QNN demo.
+Expected: `Model executed successfully.` and about **7.2 ms** per inference (50 runs after 10 warm-ups). To confirm the NPU was used, `adb logcat -d -b all | grep remote_handle64_open` should show `Successfully opened handle ... libQnnHtpV69Skel.so`.
 
-Every distributed bundle should identify its target, backend, model hash, runtime versions, preprocessing, output interpretation, and expected result.
+The model and libraries only work together: do not mix them with libraries from another QAIRT release. The `libQnn*.so` files are distributed under Qualcomm's QAIRT license terms.
