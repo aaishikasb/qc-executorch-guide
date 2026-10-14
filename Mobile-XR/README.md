@@ -196,7 +196,7 @@ The Qualcomm QNN backend is designed to map supported model operations to Snapdr
 
 ## Android Development Workflow
 
-After the command-line demo works, integrate the model into your Android app. These Java snippets illustrate integration; they are not a complete sample application. The AAR/`Module` path has not been validated on Galaxy XR. Confirm backend support in the supplied AAR before proceeding.
+After the command-line demo works, integrate the model into your Android app. These Kotlin snippets illustrate integration; they are not a complete sample application. The AAR/`Module` path has not been validated on Galaxy XR. Confirm backend support in the supplied AAR before proceeding.
 
 ### Integrate the Runtime Using an AAR
 
@@ -212,16 +212,16 @@ dependencies {
 
 ### Load the Model
 
-```java
-Module module = Module.load("MODEL.pte");
+```kotlin
+val module = Module.load("MODEL.pte")
 ```
 
 For a model stored in the application's assets or copied to an accessible filesystem location, first resolve the appropriate local path and then pass that path to `Module.load`.
 
 ### Run Inference
 
-```java
-module.forward(/* model inputs */);
+```kotlin
+module.forward(/* model inputs */)
 ```
 
 The exact input objects depend on the model's exported signature. Ensure that the input tensor shapes, data types, layout, and preprocessing match the model used to generate the `.pte` artifact.
