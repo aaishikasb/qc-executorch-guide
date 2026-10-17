@@ -1,6 +1,7 @@
 # ExecuTorch on Qualcomm: Developer Journey Guide
 
 Build on-device AI applications with PyTorch ExecuTorch on Qualcomm-powered PCs, phones, XR headsets, and IoT devices.
+General assets: https://drive.google.com/drive/folders/14-yj7vgMEhJKOxTbP-ycNmnJelyJUPJa
 
 > [!NOTE]
 > If you're participating in a Qualcomm event, start with your device's track, then follow its prepared-model setup, deployment, and demo checks.
